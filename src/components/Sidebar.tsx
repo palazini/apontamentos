@@ -1,4 +1,4 @@
-import { Stack, Title, Text, NavLink, rem } from '@mantine/core';
+import { Stack, Title, Text, NavLink } from '@mantine/core';
 import { NavLink as RouterNavLink, useLocation } from 'react-router-dom';
 import {
   IconUpload, IconCalendarTime, IconTarget, IconLink as IconAlias, IconChartHistogram,

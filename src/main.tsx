@@ -11,11 +11,6 @@ import '@mantine/dropzone/styles.css';
 import { MantineProvider } from '@mantine/core';
 import { Notifications } from '@mantine/notifications';
 
-const brand = [
-  '#e7e6ff', '#c5c2ff', '#a19cff', '#7b74ff', '#574dff',
-  '#3c33f1', '#2b25c7', '#1d199e', '#120f77', '#0800A8'
-];
-
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <MantineProvider

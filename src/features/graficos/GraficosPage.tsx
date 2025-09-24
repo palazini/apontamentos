@@ -13,8 +13,9 @@ import {
   type Centro,
   type VMetaAtual,
 } from '../../services/db';
-import { ResponsiveContainer, BarChart, Bar, LineChart, Line, ComposedChart,
+import { ResponsiveContainer, BarChart, Bar, Line, ComposedChart,
   XAxis, YAxis, Tooltip, ReferenceLine, CartesianGrid, Cell } from 'recharts';
+import type { DatesRangeValue } from '@mantine/dates';
 
 type ChartType = 'bar' | 'line';
 type ScopeType = 'fabrica' | 'centro';
@@ -196,7 +197,14 @@ export default function GraficosPage() {
             label="Período"
             placeholder="Selecione o intervalo"
             value={range}
-            onChange={setRange}
+            onChange={(val: DatesRangeValue) => {
+              const a = Array.isArray(val) ? val[0] : null;
+              const b = Array.isArray(val) ? val[1] : null;
+              setRange([
+                a instanceof Date ? a : (a ? new Date(a as any) : null),
+                b instanceof Date ? b : (b ? new Date(b as any) : null),
+              ]);
+            }}
           />
           <SegmentedControl
             value={scope}

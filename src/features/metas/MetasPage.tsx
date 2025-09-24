@@ -1,16 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button, Card, Group, Modal, NumberInput, Select, Table, Text, TextInput, Title } from '@mantine/core';
+import { Button, Card, Group, Modal, NumberInput, Table, TextInput, Title } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { fetchMetasAtuais, fetchCentros, createCentro, insertMeta, type VMetaAtual, type Centro } from '../../services/db';
+import { fetchMetasAtuais, createCentro, insertMeta, type VMetaAtual } from '../../services/db';
 
-function toOptions(centros: Centro[]) {
-  return centros.map((c) => ({ value: String(c.id), label: c.codigo }));
-}
 
 export default function MetasPage() {
   const [loading, setLoading] = useState(true);
   const [metas, setMetas] = useState<VMetaAtual[]>([]);
-  const [centros, setCentros] = useState<Centro[]>([]);
 
   const [openedEdit, setOpenedEdit] = useState(false);
   const [openedNew, setOpenedNew] = useState(false);
@@ -27,9 +23,8 @@ export default function MetasPage() {
   async function refresh() {
     setLoading(true);
     try {
-      const [m, c] = await Promise.all([fetchMetasAtuais(), fetchCentros()]);
+      const m = await fetchMetasAtuais();
       setMetas(m);
-      setCentros(c);
     } catch (e: any) {
       notifications.show({ color: 'red', title: 'Erro ao carregar', message: e.message ?? String(e) });
     } finally {
@@ -100,7 +95,7 @@ export default function MetasPage() {
           label="Meta diária (h)"
           decimalScale={2}
           value={editMetaVal}
-          onChange={setEditMetaVal}
+          onChange={(v) => setEditMetaVal(v === '' ? '' : Number(v))}
           min={0}
           step={0.25}
           placeholder="Ex.: 8.5"
@@ -137,7 +132,7 @@ export default function MetasPage() {
           label="Meta diária (h)"
           decimalScale={2}
           value={novaMeta}
-          onChange={setNovaMeta}
+          onChange={(v) => setNovaMeta(v === '' ? '' : Number(v))}
           min={0}
           step={0.25}
           mt="sm"
