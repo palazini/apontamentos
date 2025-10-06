@@ -1,5 +1,7 @@
+// src/services/db.ts
 import { supabase } from '../lib/supabaseClient';
 
+/* ===== Tipos ===== */
 export type VTtotalAtivo = {
   data_wip: string;     // 'YYYY-MM-DD'
   centro_id: number;
@@ -12,6 +14,38 @@ export type VMetaAtual = {
   meta_horas: number;
 };
 
+export type Centro = { id: number; codigo: string; ativo: boolean };
+export type Alias = { id: number; alias_texto: string; centro_id: number; centro?: { codigo: string } };
+
+export type VUploadDia = {
+  data_wip: string;
+  upload_id: number;
+  nome_arquivo: string;
+  enviado_em: string;
+  linhas: number;
+  horas_total: number;
+  ativo: boolean | null;
+};
+
+export type FabricaDia = { data_wip: string; produzido_h: number };
+export type CentroDia  = { data_wip: string; centro_id: number; produzido_h: number };
+
+export type UploadHeader = {
+  data_wip: string;
+  upload_id: number;
+  nome_arquivo: string;
+  enviado_em: string;
+  linhas: number;
+  horas_total: number;
+  ativo: boolean | null;
+};
+
+export type UploadLinha = {
+  centro_id: number;
+  horas_somadas: number;
+};
+
+/* ===== Metas & Totais (visões) ===== */
 export async function fetchMetasAtuais(): Promise<VMetaAtual[]> {
   const { data, error } = await supabase
     .from('v_metas_atuais')
@@ -40,17 +74,22 @@ export async function fetchUltimoDiaComDados(): Promise<string | null> {
   return data?.data_wip ?? null;
 }
 
-/* --------- Centros & Metas (CRUD simples) ---------- */
-export type Centro = { id: number; codigo: string; ativo: boolean };
-
+/* ===== Centros & Aliases ===== */
 export async function fetchCentros(): Promise<Centro[]> {
-  const { data, error } = await supabase.from('centros').select('id,codigo,ativo').order('codigo', { ascending: true });
+  const { data, error } = await supabase
+    .from('centros')
+    .select('id,codigo,ativo')
+    .order('codigo', { ascending: true });
   if (error) throw error;
   return (data ?? []) as Centro[];
 }
 
 export async function createCentro(codigo: string): Promise<number> {
-  const { data, error } = await supabase.from('centros').insert({ codigo: codigo.trim(), ativo: true }).select('id').single();
+  const { data, error } = await supabase
+    .from('centros')
+    .insert({ codigo: codigo.trim(), ativo: true })
+    .select('id')
+    .single();
   if (error) throw error;
   return data!.id as number;
 }
@@ -60,9 +99,6 @@ export async function insertMeta(centro_id: number, meta_horas: number, vigente_
   const { error } = await supabase.from('metas_diarias').insert(payload);
   if (error) throw error;
 }
-
-/* ------------- Aliases (Categoria -> Centro) -------------- */
-export type Alias = { id: number; alias_texto: string; centro_id: number; centro?: { codigo: string } };
 
 export async function fetchAliases(): Promise<Alias[]> {
   const { data, error } = await supabase
@@ -83,16 +119,7 @@ export async function deleteAlias(id: number) {
   if (error) throw error;
 }
 
-export type VUploadDia = {
-  data_wip: string;
-  upload_id: number;
-  nome_arquivo: string;
-  enviado_em: string;
-  linhas: number;
-  horas_total: number;
-  ativo: boolean | null;
-};
-
+/* ===== Uploads (lista por dia / ativação) ===== */
 export async function fetchUploadsPorDia(dateISO: string): Promise<VUploadDia[]> {
   const { data, error } = await supabase
     .from('v_uploads_por_dia')
@@ -104,15 +131,14 @@ export async function fetchUploadsPorDia(dateISO: string): Promise<VUploadDia[]>
 }
 
 export async function setUploadAtivo(dateISO: string, uploadId: number) {
+  // mantém a convenção do seu backend: registrar ativo por data
   const { error } = await supabase
     .from('upload_dia_ativo')
     .upsert({ data_wip: dateISO, upload_id: uploadId }, { onConflict: 'data_wip' });
   if (error) throw error;
 }
 
-export type FabricaDia = { data_wip: string; produzido_h: number };
-export type CentroDia = { data_wip: string; centro_id: number; produzido_h: number };
-
+/* ===== Séries (gráficos) ===== */
 export async function fetchFabricaRange(startISO: string, endISO: string): Promise<FabricaDia[]> {
   const { data, error } = await supabase
     .from('v_fabrica_por_dia')
@@ -146,26 +172,11 @@ export async function fetchMetaTotalAtual(): Promise<number> {
   return Number(data?.meta_diaria_total ?? 0);
 }
 
-// --- Detalhe do upload (header + linhas) ---
-export type UploadHeader = {
-  data_wip: string;
-  upload_id: number;
-  nome_arquivo: string;
-  enviado_em: string;
-  linhas: number;            // <- era "centros"
-  horas_total: number;
-  ativo: boolean | null;
-};
-
-export type UploadLinha = {
-  centro_id: number;
-  horas_somadas: number;
-};
-
+/* ===== Detalhe do upload ===== */
 export async function fetchUploadHeader(dataISO: string, uploadId: number): Promise<UploadHeader | null> {
   const { data, error } = await supabase
     .from('v_uploads_por_dia')
-    .select('data_wip, upload_id, nome_arquivo, enviado_em, linhas, horas_total, ativo') // <- "linhas"
+    .select('data_wip, upload_id, nome_arquivo, enviado_em, linhas, horas_total, ativo')
     .eq('data_wip', dataISO)
     .eq('upload_id', uploadId)
     .maybeSingle();
