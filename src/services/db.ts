@@ -14,8 +14,18 @@ export type VMetaAtual = {
   meta_horas: number;
 };
 
-export type Centro = { id: number; codigo: string; ativo: boolean };
-export type Alias = { id: number; alias_texto: string; centro_id: number; centro?: { codigo: string } };
+export type Centro = {
+  id: number;
+  codigo: string;
+  ativo: boolean;
+  desativado_desde: string | null;
+};
+export type Alias = {
+  id: number;
+  alias_texto: string;
+  centro_id: number;
+  centro?: { id: number; codigo: string };
+};
 
 export type VUploadDia = {
   data_wip: string;
@@ -70,15 +80,26 @@ export async function fetchUltimoDiaComDados(): Promise<string | null> {
     .order('data_wip', { ascending: false })
     .limit(1)
     .maybeSingle();
+
   if (error) throw error;
-  return data?.data_wip ?? null;
+  if (data?.data_wip) return data.data_wip;
+
+  // Fallback opcional:
+  const { data: up } = await supabase
+    .from('uploads')
+    .select('data_wip')
+    .order('data_wip', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return up?.data_wip ?? null;
 }
 
 /* ===== Centros & Aliases ===== */
 export async function fetchCentros(): Promise<Centro[]> {
   const { data, error } = await supabase
     .from('centros')
-    .select('id,codigo,ativo')
+    .select('id,codigo,ativo,desativado_desde')
     .order('codigo', { ascending: true });
   if (error) throw error;
   return (data ?? []) as Centro[];
@@ -193,4 +214,58 @@ export async function fetchUploadLinhas(dataISO: string, uploadId: number): Prom
     .order('horas_somadas', { ascending: false });
   if (error) throw error;
   return (data ?? []) as UploadLinha[];
+}
+
+export type CentroSmart = {
+  id: number;
+  codigo: string;
+  ativo?: boolean;                  // legado
+  desativado_desde?: string | null; // novo (opcional)
+};
+
+export async function fetchCentrosSmart(): Promise<CentroSmart[]> {
+  // tentamos buscar com 'desativado_desde'
+  const tryNew = await supabase.from('centros').select('id,codigo,desativado_desde,ativo').order('codigo', { ascending: true });
+  if (!tryNew.error) return (tryNew.data ?? []) as CentroSmart[];
+
+  // fallback: coluna não existe → usa legado
+  if (tryNew.error?.code === 'PGRST204') {
+    const { data, error } = await supabase.from('centros').select('id,codigo,ativo').order('codigo', { ascending: true });
+    if (error) throw error;
+    // mapeia adicionando desativado_desde = null
+    return (data ?? []).map((x: any) => ({ ...x, desativado_desde: null })) as CentroSmart[];
+  }
+
+  // outro erro
+  throw tryNew.error;
+}
+
+export async function desativarCentro(centro_id: number, desdeISO: string): Promise<void> {
+  // modo novo
+  const up = await supabase.from('centros').update({ desativado_desde: desdeISO }).eq('id', centro_id);
+  if (!up.error) return;
+
+  // fallback: coluna não existe → seta ativo=false (legado)
+  if (up.error?.code === 'PGRST204') {
+    const { error } = await supabase.from('centros').update({ ativo: false }).eq('id', centro_id);
+    if (error) throw error;
+    return;
+  }
+
+  throw up.error;
+}
+
+export async function reativarCentro(centro_id: number): Promise<void> {
+  // modo novo
+  const up = await supabase.from('centros').update({ desativado_desde: null }).eq('id', centro_id);
+  if (!up.error) return;
+
+  // fallback: legado
+  if (up.error?.code === 'PGRST204') {
+    const { error } = await supabase.from('centros').update({ ativo: true }).eq('id', centro_id);
+    if (error) throw error;
+    return;
+  }
+
+  throw up.error;
 }

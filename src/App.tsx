@@ -2,11 +2,9 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
 import UploadPage from './features/upload/UploadPage';
 import DashboardDia from './features/dia/DashboardDia';
-import MetasPage from './features/metas/MetasPage';
-import MapeamentoPage from './features/mapeamento/MapeamentoPage';
 import GraficosPage from './features/graficos/GraficosPage';
 import UploadDetalhePage from './features/upload/UploadDetalhePage';
-
+import ConfigGeralPage from './features/config/ConfigGeralPage';
 
 export default function App() {
   return (
@@ -17,9 +15,8 @@ export default function App() {
           <Route path="/upload" element={<UploadPage />} />
           <Route path="/upload/:data/:uploadId" element={<UploadDetalhePage />} />
           <Route path="/dia" element={<DashboardDia />} />
-          <Route path="/metas" element={<MetasPage />} />
-          <Route path="/mapeamento" element={<MapeamentoPage />} />
           <Route path="/graficos" element={<GraficosPage />} />
+          <Route path="/config" element={<ConfigGeralPage />} />
         </Route>
       </Routes>
     </BrowserRouter>
