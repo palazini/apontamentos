@@ -7,15 +7,21 @@ import {
 import { notifications } from '@mantine/notifications';
 import { supabase } from '../../lib/supabaseClient';
 import {
-  IconPlus, IconTrash, IconEdit, IconCheck, IconX,
+  IconPlus, IconTrash, IconCheck, IconX,
 } from '@tabler/icons-react';
+import { fetchAliases } from '../../services/db';
 
 /* =========================
    Tipos simples (espelham seu schema)
 ========================= */
 type Centro = { id: number; codigo: string; ativo: boolean; desativado_desde: string | null };
 type Meta = { id: number; centro_id: number; meta_horas: number; vigente_desde: string; vigente_ate: string | null };
-type Alias = { id: number; alias_texto: string; centro_id: number; centro?: { codigo: string } };
+type Alias = {
+  id: number;
+  alias_texto: string;
+  centro_id: number;
+  centro?: { id: number; codigo: string } | null;
+};
 
 function isoToday(): string {
   const d = new Date();
@@ -55,38 +61,65 @@ export default function ConfigGeralPage() {
      Loads
   ========================= */
   const loadAll = async () => {
-    setLoading(true);
-    try {
-      const [c, m, a] = await Promise.all([
-        supabase.from('centros').select('id,codigo,ativo,desativado_desde').order('codigo', { ascending: true }),
-        supabase.from('metas_diarias').select('id,centro_id,meta_horas,vigente_desde,vigente_ate').order('vigente_desde', { ascending: false }),
-        supabase.from('centro_aliases').select('id,alias_texto,centro_id, centro:centros(id,codigo)').order('alias_texto', { ascending: true }),
-      ]);
+  setLoading(true);
+  try {
+    const [centrosRes, metasRes, aliasesRes] = await Promise.all([
+      supabase
+        .from('centros')
+        .select('id,codigo,ativo,desativado_desde')
+        .order('codigo', { ascending: true }),
+      supabase
+        .from('metas_diarias')
+        .select('id,centro_id,meta_horas,vigente_desde,vigente_ate')
+        .order('vigente_desde', { ascending: false }),
+      fetchAliases(), // <- já normalizado e tipado
+    ]);
 
-      if (c.error) throw c.error;
-      if (m.error) throw m.error;
-      if (a.error) throw a.error;
+    if (centrosRes.error) throw centrosRes.error;
+    if (metasRes.error) throw metasRes.error;
 
-      setCentros((c.data ?? []) as Centro[]);
-      setMetas((m.data ?? []) as Meta[]);
-      setAliases((a.data ?? []) as Alias[]);
+    // Normaliza centros
+    const centros: Centro[] = (centrosRes.data ?? []).map((r: any) => ({
+      id: Number(r.id),
+      codigo: String(r.codigo),
+      ativo: Boolean(r.ativo),
+      desativado_desde: r.desativado_desde ?? null,
+    }));
 
-      // default da seleção
-      if (!centroSel && (c.data ?? []).length) {
-        const firstActive = (c.data as Centro[]).find((x) => x.ativo);
-        setCentroSel(String((firstActive ?? (c.data as Centro[])[0]).id));
-      }
-      if (!centroAliasSel && (c.data ?? []).length) {
-        const first = (c.data as Centro[])[0];
-        setCentroAliasSel(String(first.id));
-      }
-    } catch (e: any) {
-      console.error(e);
-      notifications.show({ title: 'Erro ao carregar', message: e.message ?? String(e), color: 'red' });
-    } finally {
-      setLoading(false);
+    // Normaliza metas
+    const metas: Meta[] = (metasRes.data ?? []).map((r: any) => ({
+      id: Number(r.id),
+      centro_id: Number(r.centro_id),
+      meta_horas: Number(r.meta_horas),
+      vigente_desde: r.vigente_desde,
+      vigente_ate: r.vigente_ate,
+    }));
+
+    setCentros(centros);
+    setMetas(metas);
+    setAliases(aliasesRes); // <- sem sombra
+
+    // defaults de seleção
+    if (!centroSel && centros.length) {
+      const firstActive = centros.find((x) => x.ativo) ?? centros[0];
+      setCentroSel(String(firstActive.id));
     }
-  };
+    if (!centroAliasSel && centros.length) {
+      setCentroAliasSel(String(centros[0].id));
+    }
+  } catch (e: any) {
+    console.error(e);
+    notifications.show({
+      title: 'Erro ao carregar',
+      message: e.message ?? String(e),
+      color: 'red',
+    });
+  } finally {
+    setLoading(false);
+  }
+};
+
+
 
   useEffect(() => { loadAll(); /* eslint-disable-next-line */ }, []);
 

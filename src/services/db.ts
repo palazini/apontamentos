@@ -21,10 +21,10 @@ export type Centro = {
   desativado_desde: string | null;
 };
 export type Alias = {
-  id: number;
-  alias_texto: string;
-  centro_id: number;
-  centro?: { id: number; codigo: string };
+   id: number;
+   alias_texto: string;
+   centro_id: number;
+   centro?: { id: number; codigo: string } | null;
 };
 
 export type VUploadDia = {
@@ -127,7 +127,21 @@ export async function fetchAliases(): Promise<Alias[]> {
     .select('id, alias_texto, centro_id, centro:centros(id, codigo)')
     .order('alias_texto', { ascending: true });
   if (error) throw error;
-  return (data ?? []) as any;
+
+  // Garante objeto (ou null), nunca array
+  const normalized: Alias[] = (data ?? []).map((r: any) => {
+    const c = r.centro;
+    const centroObj = Array.isArray(c)
+      ? (c[0] ? { id: Number(c[0].id), codigo: String(c[0].codigo) } : null)
+      : (c ? { id: Number(c.id), codigo: String(c.codigo) } : null);
+    return {
+      id: Number(r.id),
+      alias_texto: String(r.alias_texto),
+      centro_id: Number(r.centro_id),
+      centro: centroObj,
+    };
+  });
+  return normalized;
 }
 
 export async function addAlias(alias_texto: string, centro_id: number) {
