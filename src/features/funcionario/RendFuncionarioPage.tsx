@@ -1,9 +1,9 @@
 // src/features/rendimento/RendimentoPage.tsx
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Card, Group, Title, Select, Button, Badge, Text, Grid, Table, Loader
+  Card, Group, Title, Select, Button, Badge, Text, Grid, Table, Loader,
 } from '@mantine/core';
-import { DateInput } from '@mantine/dates';
+import { DatePickerInput } from '@mantine/dates';
 import {
   fetchFuncionarios,
   fetchRankingFuncionarios,
@@ -13,7 +13,7 @@ import {
   type RankItem,
 } from '../../services/db';
 import {
-  ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip
+  ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip,
 } from 'recharts';
 
 /* =========================
@@ -28,6 +28,15 @@ function toISO(d: Date) {
 function isoToDate(iso: string) {
   return new Date(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10));
 }
+function parseLocalDateString(s: string | null | undefined): Date | null {
+  if (!s) return null;
+  const m1 = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/); // dd/mm/yyyy
+  if (m1) return new Date(+m1[3], +m1[2] - 1, +m1[1]);
+  const m2 = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);   // yyyy-mm-dd
+  if (m2) return new Date(+m2[1], +m2[2] - 1, +m2[3]);
+  const t = Date.parse(s);
+  return Number.isNaN(t) ? null : new Date(t);
+}
 function sum(arr: number[]) {
   return arr.reduce((a, b) => a + b, 0);
 }
@@ -37,7 +46,7 @@ function sum(arr: number[]) {
 ========================= */
 export default function RendimentoPage() {
   // Dia único
-  const [dia, setDia] = useState<Date | null>(null);
+  const [dia, setDia] = useState<Date | null>(new Date());
 
   // Lookups
   const [funcList, setFuncList] = useState<string[]>([]);
@@ -112,9 +121,12 @@ export default function RendimentoPage() {
   };
 
   // Aplica ao trocar dia ou matrícula
-  useEffect(() => { aplicar(); /* eslint-disable-next-line */ }, [dia?.getTime(), funcSel]);
+  useEffect(() => {
+    aplicar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dia?.getTime(), funcSel]);
 
-  const totalSel = useMemo(() => sum(detalhe.map(d => d.horas)).toFixed(2), [detalhe]);
+  const totalSel = useMemo(() => sum(detalhe.map((d) => d.horas)).toFixed(2), [detalhe]);
 
   /* =========================
      Render
@@ -124,17 +136,21 @@ export default function RendimentoPage() {
       <Group justify="space-between" mb="md">
         <Title order={2}>Rendimento — Funcionários (por dia)</Title>
         {funcSel && detalhe.length > 0 && (
-          <Badge variant="light">Total {toISO(dia!)}: {totalSel} h</Badge>
+          <Badge variant="light">Total {dia ? toISO(dia) : ''}: {totalSel} h</Badge>
         )}
       </Group>
 
       <Card withBorder shadow="sm" radius="lg" p="md" mb="lg">
         <Group gap="lg" align="end" wrap="wrap">
-          <DateInput
+          <DatePickerInput
             label="Dia"
             placeholder="Selecione"
-            value={dia}
-            onChange={(v: Date | null) => setDia(v ?? new Date())}
+            value={dia ?? undefined}
+            // handler tolerante (algumas versões tipam como string|null)
+            onChange={(v: any) => {
+              if (v instanceof Date) return setDia(v);
+              setDia(parseLocalDateString(v));
+            }}
             valueFormat="DD/MM/YYYY"
             locale="pt-BR"
           />
@@ -200,7 +216,7 @@ export default function RendimentoPage() {
                 <>
                   <div style={{ height: 320, marginBottom: 16 }}>
                     <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={detalhe.map(d => ({ centro: d.codigo, horas: d.horas }))}>
+                      <BarChart data={detalhe.map((d) => ({ centro: d.codigo, horas: d.horas }))}>
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis dataKey="centro" />
                         <YAxis />
