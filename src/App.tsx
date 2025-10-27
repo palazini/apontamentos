@@ -5,6 +5,7 @@ import DashboardDia from './features/dia/DashboardDia';
 import GraficosPage from './features/graficos/GraficosPage';
 import UploadDetalhePage from './features/upload/UploadDetalhePage';
 import ConfigGeralPage from './features/config/ConfigGeralPage';
+import RendimentoPage from './features/funcionario/RendFuncionarioPage';
 
 export default function App() {
   return (
@@ -15,6 +16,7 @@ export default function App() {
           <Route path="/upload" element={<UploadPage />} />
           <Route path="/upload/:data/:uploadId" element={<UploadDetalhePage />} />
           <Route path="/dia" element={<DashboardDia />} />
+          <Route path="/rendimento" element={<RendimentoPage />} />
           <Route path="/graficos" element={<GraficosPage />} />
           <Route path="/config" element={<ConfigGeralPage />} />
         </Route>

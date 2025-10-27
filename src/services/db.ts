@@ -283,3 +283,73 @@ export async function reativarCentro(centro_id: number): Promise<void> {
 
   throw up.error;
 }
+
+export type FuncDia  = { data_wip: string; matricula: string; produzido_h: number };
+export type RankItem = { matricula: string; horas: number };
+
+export async function fetchFuncionarios(): Promise<string[]> {
+  const { data, error } = await supabase
+    .from('v_funcionarios')
+    .select('matricula')
+    .order('matricula', { ascending: true });
+  if (error) throw error;
+  return (data ?? []).map((r: any) => String(r.matricula));
+}
+
+export async function fetchFuncionarioRange(matricula: string, startISO: string, endISO: string): Promise<FuncDia[]> {
+  const { data, error } = await supabase
+    .from('v_funcionario_por_dia')
+    .select('data_wip, matricula, produzido_h')
+    .eq('matricula', matricula)
+    .gte('data_wip', startISO)
+    .lte('data_wip', endISO)
+    .order('data_wip', { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as FuncDia[];
+}
+
+export async function fetchRankingFuncionarios(startISO: string, endISO: string, limit = 10): Promise<RankItem[]> {
+  const { data, error } = await supabase
+    .from('v_funcionario_por_dia')
+    .select('matricula, produzido_h')
+    .gte('data_wip', startISO)
+    .lte('data_wip', endISO);
+
+  if (error) throw error;
+
+  const acc = new Map<string, number>();
+  for (const r of (data ?? []) as FuncDia[]) {
+    acc.set(r.matricula, (acc.get(r.matricula) ?? 0) + Number(r.produzido_h));
+  }
+  return [...acc.entries()]
+    .map(([matricula, horas]) => ({ matricula, horas: +horas.toFixed(2) }))
+    .sort((a, b) => b.horas - a.horas)
+    .slice(0, limit);
+}
+
+export type FuncCentroDia = { data_wip: string; centro_id: number; produzido_h: number };
+
+export async function fetchFuncionarioCentroRange(
+  matricula: string,
+  startISO: string,
+  endISO: string
+): Promise<FuncCentroDia[]> {
+  const { data, error } = await supabase
+    .from('v_funcionario_centro_por_dia')
+    .select('data_wip, centro_id, produzido_h')
+    .eq('matricula', matricula)
+    .gte('data_wip', startISO)
+    .lte('data_wip', endISO)
+    .order('data_wip', { ascending: true });
+
+  if (error) throw error;
+  return (data ?? []) as FuncCentroDia[];
+}
+
+export async function fetchCentrosDict(): Promise<Record<number, string>> {
+  const { data, error } = await supabase.from('centros').select('id,codigo');
+  if (error) throw error;
+  const dict: Record<number, string> = {};
+  (data ?? []).forEach((r: any) => (dict[Number(r.id)] = String(r.codigo)));
+  return dict;
+}

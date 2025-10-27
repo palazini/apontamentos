@@ -22,6 +22,7 @@ type ParsedRow = {
   centro_id: number;        // já resolvido (apenas linhas válidas)
   aliquota_horas: number;
   tipo_raw?: string | null;
+  matricula?: string | null;
 };
 
 type UploadError = { tipo: 'sheet' | 'header' | 'row' | 'meta' | 'persist'; mensagem: string };
@@ -140,7 +141,7 @@ function parseWipISO(input: unknown): string | null {
 // DateInput aceita Date/string; garantimos Date local (sem UTC shift)
 function parseLocalDateString(input: string | null | undefined): Date | null {
   if (!input) return null;
-  let s = input.trim();
+  let s = input!.trim();
 
   const t = s.indexOf('T');
   if (t >= 0) s = s.slice(0, t);
@@ -287,56 +288,77 @@ export default function UploadPage() {
   const salvarTotais = async (rows: ParsedRow[], uploadId: number) => {
     if (!rows.length) return;
 
-    const payload = rows.map((r) => ({
+    // ---- 1) Centros (totais_diarios)
+    const payloadCentros = rows.map((r) => ({
       data_wip: r.data_wip,
       centro_id: r.centro_id,
       aliquota_horas: r.aliquota_horas,
       tipo: r.tipo_raw ?? null,
     }));
 
-    // 1) tenta RPC
     const rpcRes = await supabase.rpc('importa_meta_upload', {
-      rows: payload,
+      rows: payloadCentros,
       p_upload_id: uploadId,
     });
 
-    if (!rpcRes.error) return;
+    if (rpcRes.error) {
+      // Fallback: agrega no front e grava direto em totais_diarios
+      const agg = new Map<string, { data_wip: string; centro_id: number; horas_somadas: number }>();
+      for (const r of rows) {
+        const key = `${r.data_wip}|${r.centro_id}`;
+        const cur = agg.get(key) ?? { data_wip: r.data_wip, centro_id: r.centro_id, horas_somadas: 0 };
+        cur.horas_somadas += r.aliquota_horas;
+        agg.set(key, cur);
+      }
+      const inserts = [...agg.values()].map((x) => ({
+        data_wip: x.data_wip,
+        centro_id: x.centro_id,
+        horas_somadas: +x.horas_somadas.toFixed(4),
+        upload_id_origem: uploadId,
+      }));
 
-    // 2) fallback: agrega no front e grava direto
-    const agg = new Map<string, { data_wip: string; centro_id: number; horas_somadas: number }>();
-    for (const r of rows) {
-      const key = `${r.data_wip}|${r.centro_id}`;
-      const cur = agg.get(key) ?? { data_wip: r.data_wip, centro_id: r.centro_id, horas_somadas: 0 };
-      cur.horas_somadas += r.aliquota_horas;
-      agg.set(key, cur);
+      await supabase.from('totais_diarios').delete().eq('upload_id_origem', uploadId);
+      const { error: insErr } = await supabase.from('totais_diarios').insert(inserts);
+      if (insErr) throw insErr;
     }
-    const inserts = [...agg.values()].map((x) => ({
-      data_wip: x.data_wip,
-      centro_id: x.centro_id,
-      horas_somadas: +x.horas_somadas.toFixed(4),
-      upload_id_origem: uploadId,
-    }));
 
-    // apaga reprocesso do mesmo upload
-    await supabase.from('totais_diarios').delete().eq('upload_id_origem', uploadId);
-    const { error: insErr } = await supabase.from('totais_diarios').insert(inserts);
-    if (insErr) throw insErr;
+    // ---- 2) Funcionários (totais_func_diarios) — SEMPRE roda
+    const aggFunc = new Map<string, {
+      data_wip: string; centro_id: number; matricula: string; horas_somadas: number
+    }>();
+
+    for (const r of rows) {
+      if (!r.matricula) continue; // só conta quando tiver matrícula
+      const key = `${r.data_wip}|${r.centro_id}|${r.matricula}`;
+      const cur = aggFunc.get(key) ?? {
+        data_wip: r.data_wip,
+        centro_id: r.centro_id,
+        matricula: r.matricula,
+        horas_somadas: 0,
+      };
+      cur.horas_somadas += r.aliquota_horas;
+      aggFunc.set(key, cur);
+    }
+
+    await supabase.from('totais_func_diarios').delete().eq('upload_id_origem', uploadId);
+
+    if (aggFunc.size) {
+      const insertsFunc = [...aggFunc.values()].map((x) => ({
+        data_wip: x.data_wip,
+        centro_id: x.centro_id,
+        matricula: x.matricula,
+        horas_somadas: +x.horas_somadas.toFixed(4),
+        upload_id_origem: uploadId,
+      }));
+      const { error: eFunc } = await supabase.from('totais_func_diarios').insert(insertsFunc);
+      if (eFunc) throw eFunc;
+    }
   };
 
   const marcarUpload = async (uploadId: number, dataISO: string) => {
+    // grava/atualiza o ativo do dia
     await setUploadAtivo(dataISO, uploadId);
-
-    const { error: e1 } = await supabase
-      .from('uploads')
-      .update({ ativo: false })
-      .eq('data_wip', dataISO);
-    if (e1) throw e1;
-
-    const { error: e2 } = await supabase
-      .from('uploads')
-      .update({ ativo: true })
-      .eq('id', uploadId);
-    if (e2) throw e2;
+    // pronto. nada de UPDATE na tabela uploads
   };
 
   const persistirUpload = async (
@@ -383,6 +405,9 @@ export default function UploadPage() {
       'total horas', 'horas totais', 'qtd horas', 'quantidade de horas', 'total h'
     ]);
     const colTipo = detectCol(headers, ['tipo', 'origem']);
+    const colFuncionario = detectCol(headers, [
+      'funcionario', 'funcionário', 'matricula', 'matrícula', 'colaborador'
+    ]);
 
     if (!colData || !colCategoria || !colAliquota) {
       const missing = [
@@ -397,7 +422,7 @@ export default function UploadPage() {
     const erros: UploadError[] = [];   // dados realmente inválidos
     const avisos: string[] = [];       // avisos gerais
 
-    // NOVO: agregador para categorias sem meta
+    //agregador para categorias sem meta
     const semMetaPorCategoria = new Map<string, number[]>();
 
     for (let idx = 0; idx < sheetRows.length; idx += 1) {
@@ -444,7 +469,7 @@ export default function UploadPage() {
       const centroId = mapping.aliasIndex.get(k1) ?? mapping.aliasIndex.get(k2) ?? null;
 
       if (centroId == null) {
-        // NOVO: acumula a linha em vez de logar uma por uma
+        //acumula a linha em vez de logar uma por uma
         const arr = semMetaPorCategoria.get(categoriaRaw) ?? [];
         arr.push(excelRow);
         semMetaPorCategoria.set(categoriaRaw, arr);
@@ -466,16 +491,25 @@ export default function UploadPage() {
       const aliquota = +aliParsed.toFixed(4);
       const tipoRaw = colTipo ? (String(raw[colTipo] ?? '').trim() || null) : null;
 
+      //extrai/normaliza matrícula (apenas dígitos; 3–8 dígitos)
+      let matricula: string | null = null;
+      if (colFuncionario) {
+        const rawF = String(raw[colFuncionario] ?? '').trim();
+        const onlyDigits = (rawF.match(/\d+/)?.[0] ?? '').slice(0, 8); // corta exageros
+        matricula = onlyDigits && onlyDigits.length >= 3 ? onlyDigits : null;
+      }
+
       rows.push({
         data_wip: dataWip,
         categoria_raw: categoriaRaw,
         centro_id: centro.id,
         aliquota_horas: aliquota,
         tipo_raw: tipoRaw,
+        matricula,
       });
     }
 
-    // NOVO: gera um aviso por categoria com as faixas de linhas
+    //gera um aviso por categoria com as faixas de linhas
     if (semMetaPorCategoria.size) {
       for (const [categoria, linhas] of semMetaPorCategoria) {
         avisos.push(`Categoria "${categoria}" sem meta vinculada (linhas: ${compactLineRanges(linhas)})`);
