@@ -324,12 +324,19 @@ export default function UploadPage() {
   };
 
   const marcarUpload = async (uploadId: number, dataISO: string) => {
-    const { error } = await supabase
+    await setUploadAtivo(dataISO, uploadId);
+
+    const { error: e1 } = await supabase
+      .from('uploads')
+      .update({ ativo: false })
+      .eq('data_wip', dataISO);
+    if (e1) throw e1;
+
+    const { error: e2 } = await supabase
       .from('uploads')
       .update({ ativo: true })
       .eq('id', uploadId);
-    if (error) throw error;
-    await setUploadAtivo(dataISO, uploadId);
+    if (e2) throw e2;
   };
 
   const persistirUpload = async (
@@ -675,7 +682,7 @@ export default function UploadPage() {
                                 setLoadingUploads(true);
                                 try {
                                   const iso = dateToISO(dia);
-                                  await setUploadAtivo(iso, u.upload_id);
+                                  await marcarUpload(u.upload_id, iso);
                                   await refetchUploads(dia);
                                 } catch (e) {
                                   console.error(e);
