@@ -1,5 +1,5 @@
 ﻿// src/features/upload/UploadPage.tsx
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabaseClient';
 import { parsePtBrNumber, excelSerialToISODate } from '../../utils/normalization';
@@ -213,6 +213,12 @@ export default function UploadPage() {
     setDia(normalized);
     refetchUploads(normalized);
   };
+
+  const uploadsCount = uploadsDia.length;
+  const totalHorasDia = useMemo(
+    () => uploadsDia.reduce((acc, u) => acc + Number(u.horas_total || 0), 0),
+    [uploadsDia]
+  );
 
   // abre já no último dia com dados (ou hoje)
   useEffect(() => {
@@ -658,29 +664,41 @@ export default function UploadPage() {
 
         <Grid.Col span={12}>
           <Card withBorder shadow="sm" radius="lg" p="lg">
-            <Group justify="space-between" mb="sm">
-              <Title order={4} m={0}>Uploads do dia</Title>
+            <Group justify="space-between" align="center" mb="sm" wrap="wrap">
+              <Group gap="xs" align="center">
+                <Title order={4} m={0}>Uploads do dia</Title>
+                <Badge variant="light">{uploadsCount} arquivo(s)</Badge>
+                <Badge variant="dot">Total: {totalHorasDia.toFixed(2)} h</Badge>
+              </Group>
+
               <DateInput
                 value={dia}
                 onChange={handleDiaChange}
                 valueFormat="DD/MM/YYYY"
                 locale="pt-BR"
                 dateParser={(input) => parseLocalDateString(input) ?? new Date()}
+                size="sm"
+                styles={{
+                  input: { minWidth: 132, textAlign: 'center' },
+                  root: { marginLeft: 'auto' },
+                }}
               />
             </Group>
+
             <Divider my="sm" />
 
-            <Table highlightOnHover withTableBorder stickyHeader>
+            <Table highlightOnHover withTableBorder stickyHeader striped verticalSpacing="xs">
               <Table.Thead>
                 <Table.Tr>
-                  <Table.Th>Arquivo</Table.Th>
+                  <Table.Th style={{ width: '45%' }}>Arquivo</Table.Th>
                   <Table.Th>Enviado em</Table.Th>
-                  <Table.Th className="right">Centros</Table.Th>
-                  <Table.Th className="right">Horas totais</Table.Th>
+                  <Table.Th style={{ textAlign: 'right' }}>Centros</Table.Th>
+                  <Table.Th style={{ textAlign: 'right' }}>Horas totais</Table.Th>
                   <Table.Th>Status</Table.Th>
-                  <Table.Th></Table.Th>
+                  <Table.Th style={{ width: 160 }} />
                 </Table.Tr>
               </Table.Thead>
+
               <Table.Tbody>
                 {loadingUploads ? (
                   <Table.Tr><Table.Td colSpan={6}>Carregando…</Table.Td></Table.Tr>
@@ -689,26 +707,45 @@ export default function UploadPage() {
                 ) : (
                   uploadsDia.map((u) => {
                     const enviado = toLocalBR(u.enviado_em);
+                    const ativo = Boolean(u.ativo);
+
                     return (
                       <Table.Tr
                         key={`${u.data_wip}-${u.upload_id}`}
-                        style={{ cursor: 'pointer' }}
+                        style={{
+                          cursor: 'pointer',
+                          background: ativo ? 'var(--mantine-color-green-0)' : undefined,
+                        }}
                         onClick={() => nav(`/upload/${u.data_wip}/${u.upload_id}`)}
                       >
-                        <Table.Td style={{ maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <Table.Td
+                          title={u.nome_arquivo}
+                          style={{
+                            maxWidth: 520,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
                           {u.nome_arquivo}
                         </Table.Td>
+
                         <Table.Td>{enviado}</Table.Td>
-                        <Table.Td align="right">{u.linhas}</Table.Td>
-                        <Table.Td align="right">{u.horas_total.toFixed(2)} h</Table.Td>
+                        <Table.Td style={{ textAlign: 'right' }}>{u.linhas}</Table.Td>
+                        <Table.Td style={{ textAlign: 'right' }}>{u.horas_total.toFixed(2)} h</Table.Td>
+
                         <Table.Td>
-                          {u.ativo ? <Badge color="green">ATIVO</Badge> : <Badge color="gray">Inativo</Badge>}
+                          {ativo
+                            ? <Badge color="green" radius="sm">ATIVO</Badge>
+                            : <Badge color="gray" variant="light" radius="sm">Inativo</Badge>}
                         </Table.Td>
-                        <Table.Td width={160}>
-                          {!u.ativo && (
+
+                        <Table.Td>
+                          {!ativo && (
                             <Button
                               size="xs"
                               variant="light"
+                              fullWidth
                               onClick={async (event) => {
                                 event.stopPropagation();
                                 if (!dia) return;

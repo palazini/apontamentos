@@ -55,6 +55,11 @@ export type UploadLinha = {
   horas_somadas: number;
 };
 
+export type UploadFuncLinha = { 
+  matricula: string; 
+  horas_somadas: number; 
+};
+
 /* ===== Metas & Totais (visões) ===== */
 export async function fetchMetasAtuais(): Promise<VMetaAtual[]> {
   const { data, error } = await supabase
@@ -228,6 +233,18 @@ export async function fetchUploadLinhas(dataISO: string, uploadId: number): Prom
     .order('horas_somadas', { ascending: false });
   if (error) throw error;
   return (data ?? []) as UploadLinha[];
+}
+
+export async function fetchUploadLinhasFuncionarios(dateISO: string, uploadId: number): Promise<UploadFuncLinha[]> {
+  const { data, error } = await supabase
+    .from('totais_func_diarios')
+    .select('matricula, horas_somadas')
+    .eq('data_wip', dateISO)
+    .eq('upload_id_origem', uploadId)
+    .order('horas_somadas', { ascending: false });
+
+  if (error) throw error;
+  return (data ?? []) as UploadFuncLinha[];
 }
 
 export type CentroSmart = {

@@ -1,13 +1,23 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Card, Title, Text, Table, Group, Button, Badge } from '@mantine/core';
-import { fetchCentros, type Centro } from '../../services/db';
-import { fetchUploadHeader, fetchUploadLinhas, type UploadHeader, type UploadLinha } from '../../services/db';
+import { Card, Title, Text, Table, Group, Button, Badge, SegmentedControl } from '@mantine/core';
+import {
+  fetchCentros,
+  fetchUploadHeader,
+  fetchUploadLinhas,
+  fetchUploadLinhasFuncionarios,
+  type Centro,
+  type UploadHeader,
+  type UploadLinha,
+  type UploadFuncLinha,
+} from '../../services/db';
 
 function toLocalBR(dt: string | Date) {
   const d = new Date(dt);
   return d.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', hour12: false });
 }
+
+type Visao = 'centros' | 'matriculas';
 
 export default function UploadDetalhePage() {
   const nav = useNavigate();
@@ -16,9 +26,11 @@ export default function UploadDetalhePage() {
   const id = Number(uploadId);
 
   const [header, setHeader] = useState<UploadHeader | null>(null);
-  const [linhas, setLinhas] = useState<UploadLinha[]>([]);
+  const [linhasCentros, setLinhasCentros] = useState<UploadLinha[]>([]);
+  const [linhasFuncs, setLinhasFuncs] = useState<UploadFuncLinha[]>([]);
   const [centros, setCentros] = useState<Centro[]>([]);
   const [loading, setLoading] = useState(true);
+  const [visao, setVisao] = useState<Visao>('centros');
 
   const centrosMap = useMemo(() => {
     const m = new Map<number, string>();
@@ -30,21 +42,30 @@ export default function UploadDetalhePage() {
     (async () => {
       setLoading(true);
       try {
-        const [h, ls, cs] = await Promise.all([
+        const [h, lsCentros, cs, lsFuncs] = await Promise.all([
           fetchUploadHeader(dataISO, id),
           fetchUploadLinhas(dataISO, id),
           fetchCentros(),
+          fetchUploadLinhasFuncionarios(dataISO, id), // <- NOVO
         ]);
         setHeader(h);
-        setLinhas(ls);
+        setLinhasCentros(lsCentros);
         setCentros(cs);
+        setLinhasFuncs(lsFuncs);
       } finally {
         setLoading(false);
       }
     })();
   }, [dataISO, id]);
 
-  const total = useMemo(() => linhas.reduce((s, r) => s + Number(r.horas_somadas || 0), 0), [linhas]);
+  const totalCentros = useMemo(
+    () => linhasCentros.reduce((s, r) => s + Number(r.horas_somadas || 0), 0),
+    [linhasCentros]
+  );
+  const totalFuncs = useMemo(
+    () => linhasFuncs.reduce((s, r) => s + Number(r.horas_somadas || 0), 0),
+    [linhasFuncs]
+  );
 
   return (
     <div>
@@ -63,41 +84,88 @@ export default function UploadDetalhePage() {
               <Text size="sm" c="dimmed">Data do WIP: <b>{new Date(header.data_wip).toLocaleDateString()}</b></Text>
               <Text size="sm" c="dimmed">Enviado em: <b>{toLocalBR(header.enviado_em)}</b></Text>
             </div>
-            <Group>
+            <Group gap="xs">
               <Badge variant="light">Centros: {header.linhas}</Badge>
-              <Badge variant="light">Horas: {Number(header.horas_total).toFixed(2)} h</Badge>
+              <Badge variant="light">Horas (arquivo): {Number(header.horas_total).toFixed(2)} h</Badge>
               {header.ativo ? <Badge color="green">ATIVO</Badge> : <Badge color="gray">Inativo</Badge>}
             </Group>
           </Group>
         )}
       </Card>
 
+      {/* Selector da visão */}
+      <Group justify="space-between" mb="sm">
+        <SegmentedControl
+          value={visao}
+          onChange={(v) => setVisao(v as Visao)}
+          data={[
+            { label: 'Por centro', value: 'centros' },
+            { label: 'Por matrícula', value: 'matriculas' },
+          ]}
+        />
+        <Group gap="xs">
+          <Badge variant="dot">Centros no upload: {linhasCentros.length}</Badge>
+          <Badge variant="dot">Matrículas no upload: {linhasFuncs.length}</Badge>
+          {/* Mostramos ambos os totais para facilitar conciliação */}
+          <Badge variant="light">Total (centros): {totalCentros.toFixed(2)} h</Badge>
+          <Badge variant="light">Total (matrículas): {totalFuncs.toFixed(2)} h</Badge>
+        </Group>
+      </Group>
+
       <Card withBorder shadow="sm" radius="lg" p="lg">
         {loading ? (
           <Text c="dimmed">Carregando linhas…</Text>
-        ) : linhas.length === 0 ? (
-          <Text c="dimmed">Nenhuma linha encontrada para este upload.</Text>
-        ) : (
-          <Table highlightOnHover withTableBorder stickyHeader>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>Centro</Table.Th>
-                <Table.Th className="right">Horas (h)</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {linhas.map((r) => (
-                <Table.Tr key={r.centro_id}>
-                  <Table.Td>{centrosMap.get(r.centro_id) ?? r.centro_id}</Table.Td>
-                  <Table.Td align="right">{Number(r.horas_somadas).toFixed(2)}</Table.Td>
+        ) : visao === 'centros' ? (
+          linhasCentros.length === 0 ? (
+            <Text c="dimmed">Nenhuma linha de centros encontrada para este upload.</Text>
+          ) : (
+            <Table highlightOnHover withTableBorder stickyHeader>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Centro</Table.Th>
+                  <Table.Th style={{ textAlign: 'right' }}>Horas (h)</Table.Th>
                 </Table.Tr>
-              ))}
-              <Table.Tr>
-                <Table.Td style={{ fontWeight: 700 }}>Total</Table.Td>
-                <Table.Td align="right" style={{ fontWeight: 700 }}>{total.toFixed(2)}</Table.Td>
-              </Table.Tr>
-            </Table.Tbody>
-          </Table>
+              </Table.Thead>
+              <Table.Tbody>
+                {linhasCentros.map((r) => (
+                  <Table.Tr key={r.centro_id}>
+                    <Table.Td>{centrosMap.get(r.centro_id) ?? r.centro_id}</Table.Td>
+                    <Table.Td style={{ textAlign: 'right' }}>{Number(r.horas_somadas).toFixed(2)}</Table.Td>
+                  </Table.Tr>
+                ))}
+                <Table.Tr>
+                  <Table.Td style={{ fontWeight: 700 }}>Total</Table.Td>
+                  <Table.Td style={{ textAlign: 'right', fontWeight: 700 }}>{totalCentros.toFixed(2)}</Table.Td>
+                </Table.Tr>
+              </Table.Tbody>
+            </Table>
+          )
+        ) : (
+          // Visão: MATRÍCULAS
+          linhasFuncs.length === 0 ? (
+            <Text c="dimmed">Nenhuma linha de matrículas encontrada para este upload.</Text>
+          ) : (
+            <Table highlightOnHover withTableBorder stickyHeader>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Matrícula</Table.Th>
+                  <Table.Th style={{ textAlign: 'right' }}>Horas (h)</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {linhasFuncs.map((r) => (
+                  <Table.Tr key={r.matricula}>
+                    <Table.Td>{r.matricula}</Table.Td>
+                    <Table.Td style={{ textAlign: 'right' }}>{Number(r.horas_somadas).toFixed(2)}</Table.Td>
+                  </Table.Tr>
+                ))}
+                <Table.Tr>
+                  <Table.Td style={{ fontWeight: 700 }}>Total</Table.Td>
+                  <Table.Td style={{ textAlign: 'right', fontWeight: 700 }}>{totalFuncs.toFixed(2)}</Table.Td>
+                </Table.Tr>
+              </Table.Tbody>
+            </Table>
+          )
         )}
       </Card>
     </div>
