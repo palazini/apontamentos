@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, Fragment } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Card, Title, Text, Table, Group, Button, Badge, SegmentedControl } from '@mantine/core';
 import {
@@ -46,7 +46,7 @@ export default function UploadDetalhePage() {
           fetchUploadHeader(dataISO, id),
           fetchUploadLinhas(dataISO, id),
           fetchCentros(),
-          fetchUploadLinhasFuncionarios(dataISO, id), // <- NOVO
+          fetchUploadLinhasFuncionarios(dataISO, id), // matricula + centro_id + horas
         ]);
         setHeader(h);
         setLinhasCentros(lsCentros);
@@ -58,13 +58,56 @@ export default function UploadDetalhePage() {
     })();
   }, [dataISO, id]);
 
+  // Distintos de matrícula (para badge)
+  const qtdMatriculas = useMemo(
+    () => new Set(linhasFuncs.map((r) => r.matricula)).size,
+    [linhasFuncs]
+  );
+
+  // Total por centros (como já era)
   const totalCentros = useMemo(
     () => linhasCentros.reduce((s, r) => s + Number(r.horas_somadas || 0), 0),
     [linhasCentros]
   );
+
+  // Agrupamento por matrícula: total + breakdown por centro
+  const gruposMatriculas = useMemo(() => {
+    const tmp = new Map<string, { total: number; centros: Map<number, number> }>();
+
+    for (const r of linhasFuncs) {
+      const mat = r.matricula;
+      const cid = Number(r.centro_id);
+      const h = Number(r.horas_somadas || 0);
+
+      let g = tmp.get(mat);
+      if (!g) {
+        g = { total: 0, centros: new Map() };
+        tmp.set(mat, g);
+      }
+      g.total += h;
+      g.centros.set(cid, (g.centros.get(cid) ?? 0) + h);
+    }
+
+    const arr = Array.from(tmp.entries()).map(([matricula, g]) => {
+      const centrosArr = Array.from(g.centros.entries())
+        .map(([centro_id, horas]) => ({ centro_id, horas: +horas.toFixed(2) }))
+        .sort((a, b) => b.horas - a.horas);
+
+      return {
+        matricula,
+        total: +g.total.toFixed(2),
+        centros: centrosArr,
+      };
+    });
+
+    // maiores totais primeiro
+    arr.sort((a, b) => b.total - a.total);
+    return arr;
+  }, [linhasFuncs]);
+
   const totalFuncs = useMemo(
-    () => linhasFuncs.reduce((s, r) => s + Number(r.horas_somadas || 0), 0),
-    [linhasFuncs]
+    () => gruposMatriculas.reduce((s, g) => s + g.total, 0),
+    [gruposMatriculas]
   );
 
   return (
@@ -105,8 +148,7 @@ export default function UploadDetalhePage() {
         />
         <Group gap="xs">
           <Badge variant="dot">Centros no upload: {linhasCentros.length}</Badge>
-          <Badge variant="dot">Matrículas no upload: {linhasFuncs.length}</Badge>
-          {/* Mostramos ambos os totais para facilitar conciliação */}
+          <Badge variant="dot">Matrículas no upload: {qtdMatriculas}</Badge>
           <Badge variant="light">Total (centros): {totalCentros.toFixed(2)} h</Badge>
           <Badge variant="light">Total (matrículas): {totalFuncs.toFixed(2)} h</Badge>
         </Group>
@@ -141,24 +183,50 @@ export default function UploadDetalhePage() {
             </Table>
           )
         ) : (
-          // Visão: MATRÍCULAS
-          linhasFuncs.length === 0 ? (
+          // Visão: MATRÍCULAS (agrupado) — ocupa 100% da largura
+          gruposMatriculas.length === 0 ? (
             <Text c="dimmed">Nenhuma linha de matrículas encontrada para este upload.</Text>
           ) : (
-            <Table highlightOnHover withTableBorder stickyHeader>
+            <Table
+              highlightOnHover
+              withTableBorder
+              stickyHeader
+              style={{ tableLayout: 'fixed', width: '100%' }}
+            >
               <Table.Thead>
                 <Table.Tr>
-                  <Table.Th>Matrícula</Table.Th>
-                  <Table.Th style={{ textAlign: 'right' }}>Horas (h)</Table.Th>
+                  <Table.Th style={{ width: '70%' }}>Matrícula</Table.Th>
+                  <Table.Th style={{ width: '30%', textAlign: 'right' }}>Horas (h)</Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
-                {linhasFuncs.map((r) => (
-                  <Table.Tr key={r.matricula}>
-                    <Table.Td>{r.matricula}</Table.Td>
-                    <Table.Td style={{ textAlign: 'right' }}>{Number(r.horas_somadas).toFixed(2)}</Table.Td>
-                  </Table.Tr>
+                {gruposMatriculas.map((g) => (
+                  <Fragment key={g.matricula}>
+                    {/* Linha "pai" com o total da matrícula (ocupa 2 colunas) */}
+                    <Table.Tr>
+                      <Table.Td colSpan={2} style={{ fontWeight: 600, paddingTop: 10, paddingBottom: 6 }}>
+                        <Group justify="space-between" wrap="nowrap">
+                          <Text fw={600}>{g.matricula}</Text>
+                          <Text fw={600}>{g.total.toFixed(2)}</Text>
+                        </Group>
+                      </Table.Td>
+                    </Table.Tr>
+
+                    {/* Sublinhas por centro, indentadas */}
+                    {g.centros.map((c) => (
+                      <Table.Tr key={`${g.matricula}-${c.centro_id}`}>
+                        <Table.Td style={{ paddingLeft: 24 }}>
+                          <Text size="sm" c="dimmed">— {centrosMap.get(c.centro_id) ?? c.centro_id}</Text>
+                        </Table.Td>
+                        <Table.Td style={{ textAlign: 'right' }}>
+                          <Text size="sm" c="dimmed">{c.horas.toFixed(2)}</Text>
+                        </Table.Td>
+                      </Table.Tr>
+                    ))}
+                  </Fragment>
                 ))}
+
+                {/* Total geral */}
                 <Table.Tr>
                   <Table.Td style={{ fontWeight: 700 }}>Total</Table.Td>
                   <Table.Td style={{ textAlign: 'right', fontWeight: 700 }}>{totalFuncs.toFixed(2)}</Table.Td>

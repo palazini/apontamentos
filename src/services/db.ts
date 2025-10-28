@@ -55,9 +55,10 @@ export type UploadLinha = {
   horas_somadas: number;
 };
 
-export type UploadFuncLinha = { 
-  matricula: string; 
-  horas_somadas: number; 
+export type UploadFuncLinha = {
+  matricula: string;
+  centro_id: number;
+  horas_somadas: number;
 };
 
 /* ===== Metas & Totais (visões) ===== */
@@ -238,7 +239,7 @@ export async function fetchUploadLinhas(dataISO: string, uploadId: number): Prom
 export async function fetchUploadLinhasFuncionarios(dateISO: string, uploadId: number): Promise<UploadFuncLinha[]> {
   const { data, error } = await supabase
     .from('totais_func_diarios')
-    .select('matricula, horas_somadas')
+    .select('matricula, centro_id, horas_somadas')
     .eq('data_wip', dateISO)
     .eq('upload_id_origem', uploadId)
     .order('horas_somadas', { ascending: false });
