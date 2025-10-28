@@ -13,7 +13,7 @@ import { fetchUploadsPorDia, setUploadAtivo, fetchUltimoDiaComDados, type VUploa
 /* ==========================
    Tipos
 ========================== */
-type Centro = { id: number; codigo: string };
+type Centro = { id: number; codigo: string; ativo?: boolean | null; desativado_desde?: string | null };
 type Alias  = { alias_texto: string; centro_id: number };
 
 type ParsedRow = {
@@ -246,7 +246,7 @@ export default function UploadPage() {
   };
 
   const fetchCentros = async (): Promise<Centro[]> => {
-    const { data, error } = await supabase.from('centros').select('id, codigo');
+    const { data, error } = await supabase.from('centros').select('id, codigo, ativo, desativado_desde');
     if (error) throw error;
     return data ?? [];
   };
@@ -255,6 +255,13 @@ export default function UploadPage() {
     const { data, error } = await supabase.from('centro_aliases').select('alias_texto, centro_id');
     if (error) throw error;
     return data ?? [];
+  };
+
+  // ISO 'YYYY-MM-DD' compara lexicograficamente em ordem de data
+  const isAtivoNoDia = (c: Centro, dataISO: string) => {
+    const flagAtivo = c.ativo ?? true; // legado
+    const corte = c.desativado_desde ?? null;
+    return flagAtivo && (!corte || dataISO < corte);
   };
 
   /**
@@ -486,6 +493,11 @@ export default function UploadPage() {
       if (!centro) {
         // mantém aviso individual — casos raros
         avisos.push(`Centro id=${centroId} não encontrado no cadastro (linha ${excelRow}).`);
+        continue;
+      }
+      // Ignora centros inativos na data do WIP
+      if (!isAtivoNoDia(centro, dataWip)) {
+        avisos.push(`Centro "${centro.codigo}" inativo em ${dataWip} (linha ${excelRow}) — ignorado.`);
         continue;
       }
 
