@@ -650,7 +650,6 @@ export default function UploadPage() {
           <Card withBorder shadow="sm" radius="lg" p="lg">
             <Title order={6} mb="sm">Dicas</Title>
             <ul style={{ margin: 0, paddingLeft: 16, color: '#475467' }}>
-              <li>“Alíquota” aceita vírgula (pt-BR).</li>
               <li>“Categoria” mapeia para centros com meta; demais são ignoradas.</li>
               <li>Reenvie o mesmo dia para <b>substituir</b> o upload ativo.</li>
             </ul>
