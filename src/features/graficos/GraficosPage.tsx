@@ -46,27 +46,31 @@ function toISO(d: Date) {
   const da = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${da}`;
 }
+
 function startOfDayLocal(d: Date) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
+
 function toSafeDate(v: unknown): Date | null {
   if (!v) return null;
   if (v instanceof Date) return v;
   if (typeof (v as any)?.toDate === 'function') {
     const d = (v as any).toDate();
     return d instanceof Date && !Number.isNaN(d.getTime()) ? d : null;
-  }
+    }
   if (typeof v === 'string' || typeof v === 'number') {
     const d = new Date(v as any);
     return !Number.isNaN(d.getTime()) ? d : null;
   }
   return null;
 }
+
 function addDays(d: Date, delta: number) {
   const nd = new Date(d);
   nd.setDate(d.getDate() + delta);
   return startOfDayLocal(nd);
 }
+
 function daysBetween(a: Date, b: Date): string[] {
   const res: string[] = [];
   const start = startOfDayLocal(a);
@@ -74,20 +78,28 @@ function daysBetween(a: Date, b: Date): string[] {
   for (let d = start; d <= end; d = addDays(d, 1)) res.push(toISO(d));
   return res;
 }
-function shortBR(iso: string) {
-  const d = new Date(iso);
-  return d.toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' });
+
+/** Parse local (evita o bug do "YYYY-MM-DD" como UTC) */
+function isoToLocalDate(iso: string) {
+  const y = Number(iso.slice(0, 4));
+  const m = Number(iso.slice(5, 7));
+  const d = Number(iso.slice(8, 10));
+  return new Date(y, m - 1, d); // local, sem shift de fuso
 }
+
+function shortBR(iso: string) {
+  const d = isoToLocalDate(iso);
+  return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+}
+
 function colorFor(pct: number) {
   if (pct < 80) return '#ef4444';
   if (pct <= 100) return '#f59e0b';
   return '#16a34a';
 }
+
 function isSundayISO(iso: string) {
-  const y = Number(iso.slice(0, 4));
-  const m = Number(iso.slice(5, 7));
-  const d = Number(iso.slice(8, 10));
-  return new Date(y, m - 1, d).getDay() === 0;
+  return isoToLocalDate(iso).getDay() === 0;
 }
 
 /* tooltip */
@@ -124,7 +136,7 @@ export default function GraficosPage() {
   const [metaTotal, setMetaTotal] = useState<number>(0);
   const [centroSel, setCentroSel] = useState<string | null>(null);
 
-  // NEW: ignorar domingos nos KPIs
+  // Ignorar domingos nos KPIs e coloração
   const [ignoreSunday, setIgnoreSunday] = useState<boolean>(true);
 
   const [data, setData] = useState<DayRow[]>([]);
@@ -201,7 +213,7 @@ export default function GraficosPage() {
 
   useEffect(() => { aplicar(); }, [aplicar]);
 
-  /* KPIs agora respeitam "ignorar domingos" */
+  /* KPIs respeitam "ignorar domingos" */
   const rowsForKpi = useMemo(
     () => (ignoreSunday ? data.filter((r) => !isSundayISO(r.iso)) : data),
     [data, ignoreSunday]
@@ -332,7 +344,7 @@ export default function GraficosPage() {
             ]}
           />
 
-          {/* NOVO: botão para ignorar domingos */}
+          {/* Ignorar/incluir domingos */}
           <SegmentedControl
             value={ignoreSunday ? 'ignorar' : 'incluir'}
             onChange={(v) => setIgnoreSunday(v === 'ignorar')}
