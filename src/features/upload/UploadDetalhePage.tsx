@@ -1,3 +1,4 @@
+// src/features/upload/UploadDetalhePage.tsx
 import { useEffect, useMemo, useState, Fragment } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Card, Title, Text, Table, Group, Button, Badge, SegmentedControl } from '@mantine/core';
@@ -12,6 +13,19 @@ import {
   type UploadFuncLinha,
 } from '../../services/db';
 
+/* ===== Helpers de data ===== */
+// Constrói Date no fuso local a partir de 'YYYY-MM-DD' (evita shift para o dia anterior)
+function isoToLocalDate(iso: string) {
+  const y = Number(iso.slice(0, 4));
+  const m = Number(iso.slice(5, 7));
+  const d = Number(iso.slice(8, 10));
+  return new Date(y, m - 1, d);
+}
+function formatISODateBR(iso: string) {
+  const d = isoToLocalDate(iso);
+  return d.toLocaleDateString('pt-BR'); // já é data local (sem hora)
+}
+// Para timestamps (enviado_em): ok usar timezone explícito
 function toLocalBR(dt: string | Date) {
   const d = new Date(dt);
   return d.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', hour12: false });
@@ -124,7 +138,8 @@ export default function UploadDetalhePage() {
           <Group justify="space-between" align="start">
             <div>
               <Title order={4} m={0}>{header.nome_arquivo}</Title>
-              <Text size="sm" c="dimmed">Data do WIP: <b>{new Date(header.data_wip).toLocaleDateString()}</b></Text>
+              {/* >>> Correção do "um dia antes": formata como data local */}
+              <Text size="sm" c="dimmed">Data do WIP: <b>{formatISODateBR(header.data_wip)}</b></Text>
               <Text size="sm" c="dimmed">Enviado em: <b>{toLocalBR(header.enviado_em)}</b></Text>
             </div>
             <Group gap="xs">
