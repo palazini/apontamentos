@@ -1,7 +1,15 @@
 // src/features/graficos/GraficosPage.tsx
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import {
-  Card, Group, Title, Text, SegmentedControl, Select, Button, Badge, Stack,
+  Card,
+  Group,
+  Title,
+  Text,
+  SegmentedControl,
+  Select,
+  Button,
+  Badge,
+  Stack,
 } from '@mantine/core';
 import { DatePickerInput } from '@mantine/dates';
 import type { DatesRangeValue } from '@mantine/dates';
@@ -57,7 +65,7 @@ function toSafeDate(v: unknown): Date | null {
   if (typeof (v as any)?.toDate === 'function') {
     const d = (v as any).toDate();
     return d instanceof Date && !Number.isNaN(d.getTime()) ? d : null;
-    }
+  }
   if (typeof v === 'string' || typeof v === 'number') {
     const d = new Date(v as any);
     return !Number.isNaN(d.getTime()) ? d : null;
@@ -136,9 +144,6 @@ export default function GraficosPage() {
   const [metaTotal, setMetaTotal] = useState<number>(0);
   const [centroSel, setCentroSel] = useState<string | null>(null);
 
-  // Ignorar domingos nos KPIs e coloração
-  const [ignoreSunday, setIgnoreSunday] = useState<boolean>(true);
-
   const [data, setData] = useState<DayRow[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
 
@@ -190,19 +195,37 @@ export default function GraficosPage() {
           const prod = +(map.get(d) ?? 0).toFixed(2);
           const meta = +metaTotal.toFixed(2);
           const pct = meta > 0 ? (prod / meta) * 100 : 100;
-          return { iso: d, label: shortBR(d), produzido: prod, meta, pct, diff: +(prod - meta).toFixed(2) };
+          return {
+            iso: d,
+            label: shortBR(d),
+            produzido: prod,
+            meta,
+            pct,
+            diff: +(prod - meta).toFixed(2),
+          };
         });
         setData(rows);
       } else {
         const id = Number(centroSel);
-        if (!id) { setData([]); setLoading(false); return; }
+        if (!id) {
+          setData([]);
+          setLoading(false);
+          return;
+        }
         const meta = +(metaByCentro.get(id) ?? 0);
         const rowsRaw = await fetchCentroSeriesRange([id], toISO(start), toISO(end));
         const map = new Map(rowsRaw.map((r) => [r.data_wip, Number(r.produzido_h)]));
         const rows: DayRow[] = dias.map((d) => {
           const prod = +(map.get(d) ?? 0).toFixed(2);
           const pct = meta > 0 ? (prod / meta) * 100 : 100;
-          return { iso: d, label: shortBR(d), produzido: prod, meta, pct, diff: +(prod - meta).toFixed(2) };
+          return {
+            iso: d,
+            label: shortBR(d),
+            produzido: prod,
+            meta,
+            pct,
+            diff: +(prod - meta).toFixed(2),
+          };
         });
         setData(rows);
       }
@@ -211,12 +234,24 @@ export default function GraficosPage() {
     }
   }, [range, scope, centroSel, metaTotal, metaByCentro]);
 
-  useEffect(() => { aplicar(); }, [aplicar]);
+  useEffect(() => {
+    aplicar();
+  }, [aplicar]);
 
-  /* KPIs respeitam "ignorar domingos" */
+  /* Sempre ignorar domingos nos KPIs e gráficos */
+  const chartData = useMemo(
+    () => data.filter((r) => !isSundayISO(r.iso)),
+    [data]
+  );
+
   const rowsForKpi = useMemo(
-    () => (ignoreSunday ? data.filter((r) => !isSundayISO(r.iso)) : data),
-    [data, ignoreSunday]
+    () => data.filter((r) => !isSundayISO(r.iso)),
+    [data]
+  );
+
+  const sundayRows = useMemo(
+    () => data.filter((r) => isSundayISO(r.iso)),
+    [data]
   );
 
   const kpis = useMemo(() => {
@@ -232,16 +267,22 @@ export default function GraficosPage() {
   }, [rowsForKpi]);
 
   const yMax = useMemo(() => {
-    const mx = Math.max(0, ...data.map((r) => Math.max(r.produzido, r.meta)));
+    const mx = Math.max(0, ...chartData.map((r) => Math.max(r.produzido, r.meta)));
     if (!Number.isFinite(mx) || mx === 0) return 10;
     return Math.ceil(mx * 1.15);
-  }, [data]);
+  }, [chartData]);
 
   const exportCsv = () => {
     if (!data.length || !range[0] || !range[1]) return;
     const titulo = scope === 'fabrica' ? 'Fabrica' : `Centro_${centroSel ?? ''}`;
     const head = ['Data', 'Produzido(h)', 'Meta(h)', 'Diferença(h)', 'Aderencia(%)'];
-    const rows = data.map((r) => [r.iso, r.produzido.toFixed(2), r.meta.toFixed(2), r.diff.toFixed(2), r.pct.toFixed(2)]);
+    const rows = data.map((r) => [
+      r.iso,
+      r.produzido.toFixed(2),
+      r.meta.toFixed(2),
+      r.diff.toFixed(2),
+      r.pct.toFixed(2),
+    ]);
     const csv = [head.join(';'), ...rows.map((a) => a.join(';'))].join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -266,11 +307,13 @@ export default function GraficosPage() {
     const b = toSafeDate(b0);
 
     let start = a ? startOfDayLocal(a) : null;
-    let end   = b ? startOfDayLocal(b) : null;
+    let end = b ? startOfDayLocal(b) : null;
 
     // Se o usuário clicar o fim antes do início, inverte
     if (start && end && start.getTime() > end.getTime()) {
-      const tmp = start; start = end; end = tmp;
+      const tmp = start;
+      start = end;
+      end = tmp;
     }
 
     setRange([start, end]);
@@ -284,10 +327,20 @@ export default function GraficosPage() {
           <Group gap="xs" wrap="wrap">
             <Badge variant="light">Produzido: {kpis.totalProd} h</Badge>
             <Badge variant="light">Meta: {kpis.totalMeta} h</Badge>
-            <Badge color={kpis.aderencia < 80 ? 'red' : kpis.aderencia <= 100 ? 'yellow' : 'green'}>
+            <Badge
+              color={
+                kpis.aderencia < 80
+                  ? 'red'
+                  : kpis.aderencia <= 100
+                  ? 'yellow'
+                  : 'green'
+              }
+            >
               Aderência: {kpis.aderencia}%
             </Badge>
-            {ignoreSunday && <Badge variant="outline">Domingos ignorados</Badge>}
+            <Badge variant="outline" color="gray">
+              Domingos ignorados nos KPIs e gráficos
+            </Badge>
           </Group>
         )}
       </Group>
@@ -308,10 +361,18 @@ export default function GraficosPage() {
               maxDate={new Date()}
             />
             <Group gap={6}>
-              <Button size="xs" variant="subtle" onClick={() => setQuickRange('7d')}>Últimos 7d</Button>
-              <Button size="xs" variant="subtle" onClick={() => setQuickRange('15d')}>15d</Button>
-              <Button size="xs" variant="subtle" onClick={() => setQuickRange('30d')}>30d</Button>
-              <Button size="xs" variant="subtle" onClick={() => setQuickRange('mesAtual')}>Mês atual</Button>
+              <Button size="xs" variant="subtle" onClick={() => setQuickRange('7d')}>
+                Últimos 7d
+              </Button>
+              <Button size="xs" variant="subtle" onClick={() => setQuickRange('15d')}>
+                15d
+              </Button>
+              <Button size="xs" variant="subtle" onClick={() => setQuickRange('30d')}>
+                30d
+              </Button>
+              <Button size="xs" variant="subtle" onClick={() => setQuickRange('mesAtual')}>
+                Mês atual
+              </Button>
             </Group>
           </Stack>
 
@@ -344,16 +405,6 @@ export default function GraficosPage() {
             ]}
           />
 
-          {/* Ignorar/incluir domingos */}
-          <SegmentedControl
-            value={ignoreSunday ? 'ignorar' : 'incluir'}
-            onChange={(v) => setIgnoreSunday(v === 'ignorar')}
-            data={[
-              { label: 'Incluir domingos', value: 'incluir' },
-              { label: 'Ignorar domingos', value: 'ignorar' },
-            ]}
-          />
-
           <Button variant="default" leftSection={<IconDownload size={16} />} onClick={exportCsv}>
             Exportar CSV
           </Button>
@@ -364,66 +415,80 @@ export default function GraficosPage() {
       <Card withBorder shadow="sm" radius="lg" p="lg">
         {loading ? (
           <Text c="dimmed">Carregando...</Text>
-        ) : !data.length ? (
-          <Text c="dimmed">Sem dados para o período/seleção.</Text>
+        ) : !chartData.length ? (
+          <Text c="dimmed">
+            Sem dados (ou apenas domingos) para o período/seleção.
+          </Text>
         ) : chartType === 'bar' ? (
-          <div style={{ height: 400 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={data}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="label" />
-                <YAxis domain={[0, yMax]} />
-                <Tooltip content={<TooltipContent />} />
-                <Legend />
-                <Bar dataKey="produzido" name="Produzido (h)" radius={[6, 6, 0, 0]}>
-                  {data.map((r, i) => (
-                    <Cell
-                      key={i}
-                      fill={ignoreSunday && isSundayISO(r.iso) ? '#d1d5db' : colorFor(r.pct)}
-                    />
-                  ))}
-                </Bar>
-                <Line
-                  type="linear"
-                  dataKey="meta"
-                  name="Meta (h)"
-                  stroke="#1f2937"
-                  strokeDasharray="6 6"
-                  dot={false}
-                  strokeWidth={2}
-                />
-              </ComposedChart>
-            </ResponsiveContainer>
-          </div>
+          <>
+            <div style={{ height: 400 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="label" />
+                  <YAxis domain={[0, yMax]} />
+                  <Tooltip content={<TooltipContent />} />
+                  <Legend />
+                  <Bar
+                    dataKey="produzido"
+                    name="Produzido (h)"
+                    radius={[6, 6, 0, 0]}
+                  >
+                    {chartData.map((r, i) => (
+                      <Cell key={i} fill={colorFor(r.pct)} />
+                    ))}
+                  </Bar>
+                  <Line
+                    type="linear"
+                    dataKey="meta"
+                    name="Meta (h)"
+                    stroke="#1f2937"
+                    strokeDasharray="6 6"
+                    dot={false}
+                    strokeWidth={2}
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </>
         ) : (
-          <div style={{ height: 400 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={data}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="label" />
-                <YAxis domain={[0, yMax]} />
-                <Tooltip content={<TooltipContent />} />
-                <Legend />
-                <Line
-                  type="monotone"
-                  dataKey="produzido"
-                  name="Produzido (h)"
-                  dot={false}
-                  stroke="#2563eb"
-                  strokeWidth={2}
-                />
-                <Line
-                  type="linear"
-                  dataKey="meta"
-                  name="Meta (h)"
-                  dot={false}
-                  stroke="#1f2937"
-                  strokeDasharray="6 6"
-                  strokeWidth={2}
-                />
-              </ComposedChart>
-            </ResponsiveContainer>
-          </div>
+          <>
+            <div style={{ height: 400 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="label" />
+                  <YAxis domain={[0, yMax]} />
+                  <Tooltip content={<TooltipContent />} />
+                  <Legend />
+                  <Line
+                    type="monotone"
+                    dataKey="produzido"
+                    name="Produzido (h)"
+                    dot={false}
+                    stroke="#2563eb"
+                    strokeWidth={2}
+                  />
+                  <Line
+                    type="linear"
+                    dataKey="meta"
+                    name="Meta (h)"
+                    dot={false}
+                    stroke="#1f2937"
+                    strokeDasharray="6 6"
+                    strokeWidth={2}
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </>
+        )}
+
+        {sundayRows.length > 0 && (
+          <Text size="xs" c="dimmed" mt="xs">
+            {sundayRows.length} domingo(s) foram ignorados nos gráficos e KPIs,
+            mas continuam presentes na exportação CSV.
+          </Text>
         )}
       </Card>
     </div>
