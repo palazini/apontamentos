@@ -61,6 +61,27 @@ export type UploadFuncLinha = {
   horas_somadas: number;
 };
 
+export type FuncionarioMeta = {
+  id: number;
+  matricula: string;
+  nome: string;
+  meta_diaria_horas: number;
+  ativo: boolean;
+};
+
+export type FuncionarioDia = {
+  data_wip: string;     // 'YYYY-MM-DD'
+  matricula: string;
+  produzido_h: number;
+};
+
+export type FuncionarioMes = {
+  ano_mes: string;      // 'YYYY-MM-01'
+  matricula: string;
+  produzido_h: number;
+};
+
+
 /* ===== Metas & Totais (visões) ===== */
 export async function fetchMetasAtuais(): Promise<VMetaAtual[]> {
   const { data, error } = await supabase
@@ -370,4 +391,58 @@ export async function fetchCentrosDict(): Promise<Record<number, string>> {
   const dict: Record<number, string> = {};
   (data ?? []).forEach((r: any) => (dict[Number(r.id)] = String(r.codigo)));
   return dict;
+}
+
+
+export async function fetchFuncionariosMeta(): Promise<FuncionarioMeta[]> {
+  const { data, error } = await supabase
+    .from('funcionarios_meta')
+    .select('id, matricula, nome, meta_diaria_horas, ativo')
+    .order('matricula', { ascending: true });
+
+  if (error) throw error;
+  return (data ?? []) as FuncionarioMeta[];
+}
+
+
+export async function upsertFuncionarioMeta(payload: {
+  id?: number;
+  matricula: string;
+  nome: string;
+  meta_diaria_horas: number;
+  ativo?: boolean;
+}): Promise<void> {
+  const row = {
+    ...payload,
+    ativo: payload.ativo ?? true,
+  };
+
+  const { error } = await supabase
+    .from('funcionarios_meta')
+    .upsert(row, { onConflict: 'matricula' });
+
+  if (error) throw error;
+}
+
+
+export async function fetchFuncionariosDia(dataISO: string): Promise<FuncionarioDia[]> {
+  const { data, error } = await supabase
+    .from('v_funcionario_por_dia')
+    .select('data_wip, matricula, produzido_h')
+    .eq('data_wip', dataISO);
+
+  if (error) throw error;
+  return (data ?? []) as FuncionarioDia[];
+}
+
+
+export async function fetchFuncionariosMes(anoMesISO: string): Promise<FuncionarioMes[]> {
+  // anoMesISO = '2025-11-01' (primeiro dia do mês)
+  const { data, error } = await supabase
+    .from('v_funcionario_por_mes')
+    .select('ano_mes, matricula, produzido_h')
+    .eq('ano_mes', anoMesISO);
+
+  if (error) throw error;
+  return (data ?? []) as FuncionarioMes[];
 }

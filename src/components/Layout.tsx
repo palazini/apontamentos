@@ -13,6 +13,8 @@ import {
   IconChartHistogram,
   IconUpload,
   IconSettings,
+  IconUsers,
+  IconGauge,
 } from '@tabler/icons-react';
 
 function Brand() {
@@ -31,10 +33,42 @@ type LinkItem = {
 };
 
 const links: LinkItem[] = [
-  { label: 'Visão do Dia', to: '/dia', icon: <IconCalendarTime size={16} />, exact: true },
-  { label: 'Gráficos', to: '/graficos', icon: <IconChartHistogram size={16} />, exact: true },
-  { label: 'Upload', to: '/upload', icon: <IconUpload size={16} />, exact: false },
-  { label: 'Configurações', to: '/config', icon: <IconSettings size={16} />, exact: true },
+  {
+    label: 'Visão do Dia',
+    to: '/dia',
+    icon: <IconCalendarTime size={16} />,
+    exact: true,
+  },
+  {
+    label: 'Gráficos',
+    to: '/graficos',
+    icon: <IconChartHistogram size={16} />,
+    exact: true,
+  },
+  {
+    label: 'Colaboradores',
+    to: '/colaboradores',
+    icon: <IconUsers size={16} />,
+    exact: true,
+  },
+  {
+    label: 'Rendimento',
+    to: '/rendimento',
+    icon: <IconGauge size={16} />,
+    exact: true,
+  },
+  {
+    label: 'Upload',
+    to: '/upload',
+    icon: <IconUpload size={16} />,
+    exact: false,
+  },
+  {
+    label: 'Configurações',
+    to: '/config',
+    icon: <IconSettings size={16} />,
+    exact: true,
+  },
 ];
 
 export default function Layout() {
@@ -48,7 +82,10 @@ export default function Layout() {
       {/* HEADER */}
       <AppShell.Header
         withBorder
-        style={{ backdropFilter: 'saturate(180%) blur(6px)', background: 'rgba(255,255,255,0.85)' }}
+        style={{
+          backdropFilter: 'saturate(180%) blur(6px)',
+          background: 'rgba(255,255,255,0.85)',
+        }}
       >
         <Group h="100%" px="md" justify="space-between">
           <Link to="/" style={{ textDecoration: 'none', color: 'inherit' }}>
@@ -76,7 +113,14 @@ export default function Layout() {
           ))}
         </nav>
 
-        <div style={{ marginTop: 'auto', opacity: 0.6, fontSize: 12, padding: 8 }}>
+        <div
+          style={{
+            marginTop: 'auto',
+            opacity: 0.6,
+            fontSize: 12,
+            padding: 8,
+          }}
+        >
           <Text c="dimmed">© {new Date().getFullYear()}</Text>
         </div>
       </AppShell.Navbar>
