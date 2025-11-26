@@ -1,5 +1,5 @@
 // src/features/tv/TvDashboardPage.tsx
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
   ActionIcon,
   Badge,
@@ -11,7 +11,7 @@ import {
   Text,
   Title,
   Progress,
-  RingProgress, // ⬅️ ADICIONA
+  RingProgress,
 } from '@mantine/core';
 import {
   ResponsiveContainer,
@@ -39,11 +39,12 @@ import {
   fetchCentroSeriesRange,
   fetchUltimoDiaComDados,
   fetchUploadsPorDia,
-  fetchCentrosSmart, // ⬅️ ADICIONA
+  fetchCentrosSmart,
   type VMetaAtual,
   type VUploadDia,
-  type CentroSmart, // ⬅️ ADICIONA
+  type CentroSmart,
 } from '../../services/db';
+import { supabase } from '../../lib/supabaseClient';
 import { fracDiaLogico } from '../../utils/time';
 
 /* ========= helpers de data ========= */
@@ -240,6 +241,8 @@ export default function TvDashboardPage() {
 
   const [activeSlide, setActiveSlide] = useState(0);
 
+  const cancelledRef = useRef(false);
+
   // full screen
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
@@ -257,225 +260,256 @@ export default function TvDashboardPage() {
     return () => document.removeEventListener('fullscreenchange', handler);
   }, []);
 
-  // carregar dados principais
-  useEffect(() => {
-    let cancelled = false;
+  const loadData = useCallback(async () => {
+    cancelledRef.current = false;
+    try {
+      setLoading(true);
 
-    async function load() {
-      try {
-        setLoading(true);
-
-        const lastDayIso = await fetchUltimoDiaComDados();
-        if (!lastDayIso) {
-          if (!cancelled) {
-            setFactoryDays([]);
-            setCentrosPerf([]);
-            setLastUpdateText('Sem dados');
-            setHoraRefLabel('–:–');
-          }
-          return;
-        }
-
-        const diaRef = isoToLocalDate(lastDayIso);
-        const diaRefLocal = startOfDayLocal(diaRef);
-        //if (!cancelled) setRefDate(diaRefLocal);
-
-        // pega uploads do último dia e acha o ATIVO (ou o mais recente)
-        const uploadsDia: VUploadDia[] = await fetchUploadsPorDia(lastDayIso);
-        let ativo =
-          uploadsDia.find((u) => u.ativo) ??
-          uploadsDia
-            .slice()
-            .sort(
-              (a, b) =>
-                new Date(a.enviado_em).getTime() -
-                new Date(b.enviado_em).getTime()
-            )
-            .at(-1) ??
-          null;
-
-        let horaRef = '00:44';
-        if (ativo) {
-          const dt = new Date(ativo.enviado_em);
-          const dataStr = dt.toLocaleDateString('pt-BR', {
-            day: '2-digit',
-            month: '2-digit',
-          });
-          const horaStr = dt.toLocaleTimeString('pt-BR', {
-            hour: '2-digit',
-            minute: '2-digit',
-          });
-          horaRef = horaStr;
-          if (!cancelled) {
-            setLastUpdateText(`${dataStr} • ${horaStr}`);
-            setHoraRefLabel(horaStr);
-          }
-        } else if (!cancelled) {
+      const lastDayIso = await fetchUltimoDiaComDados();
+      if (!lastDayIso) {
+        if (!cancelledRef.current) {
+          setFactoryDays([]);
+          setCentrosPerf([]);
           setLastUpdateText('Sem dados');
           setHoraRefLabel('–:–');
         }
-
-        // contexto do dia (igual Visão do dia)
-        const todayLocal = startOfDayLocal(new Date());
-        const isPast = diaRefLocal < todayLocal;
-        const isToday = diaRefLocal.getTime() === todayLocal.getTime();
-        const isFuture = !isPast && !isToday;
-        const frac = isPast ? 1 : isFuture ? 0 : fracDiaLogico(horaRef);
-
-        if (!cancelled) {
-          setContextDia({ isPast, isToday, isFuture, frac });
-        }
-
-        const startMes = new Date(
-          diaRefLocal.getFullYear(),
-          diaRefLocal.getMonth(),
-          1
-        );
-        const diasCorridosMes = countDaysExcludingSundays(startMes, diaRefLocal);
-
-        const startSerie = addDays(diaRefLocal, -13); // últimos ~14 dias
-
-        // ⬇️ AGORA BUSCA TAMBÉM OS CENTROS
-        const [metaTotal, metasAtuaisAll, fabRange, centrosSmart] =
-          await Promise.all([
-            fetchMetaTotalAtual(),
-            fetchMetasAtuais(),
-            fetchFabricaRange(toISO(startSerie), toISO(diaRefLocal)),
-            fetchCentrosSmart(),
-          ]);
-
-        const metaDiaTotal = Number(metaTotal) || 0;
-
-        // série da fábrica (removendo domingos, destacando sábados)
-        const dias = daysBetween(startSerie, diaRefLocal);
-        const fabMap = new Map<string, number>();
-        fabRange.forEach((r: any) => {
-          fabMap.set(r.data_wip, Number(r.produzido_h) || 0);
-        });
-
-        const serieFactory: FactoryDayRow[] = [];
-        for (const iso of dias) {
-          if (isSundayISO(iso)) continue; // remove domingo do gráfico
-          const prod = +(fabMap.get(iso) ?? 0).toFixed(2);
-          const pct = metaDiaTotal > 0 ? (prod / metaDiaTotal) * 100 : 100;
-          serieFactory.push({
-            iso,
-            label: shortBR(iso),
-            produzido: prod,
-            meta: metaDiaTotal,
-            pct,
-            isSaturday: isSaturdayISO(iso),
-          });
-        }
-
-        // ⬇️ MONTA CONJUNTO DE CENTROS ATIVOS NO DIA
-        const ativosSet = new Set<number>();
-        (centrosSmart as CentroSmart[]).forEach((c) => {
-          if (isCentroAtivoNoDia(c, diaRefLocal)) ativosSet.add(c.id);
-        });
-
-        // metas apenas dos centros ATIVOS
-        const metasAtuais = (metasAtuaisAll as VMetaAtual[]).filter((m) =>
-          ativosSet.has(m.centro_id)
-        );
-
-        // performance por centro (máquina) – mês inteiro e dia de referência
-        const metasByCentro = new Map<
-          number,
-          { metaDia: number; codigo: string }
-        >();
-        metasAtuais.forEach((m) => {
-          metasByCentro.set(m.centro_id, {
-            metaDia: Number(m.meta_horas) || 0,
-            codigo: m.centro,
-          });
-        });
-
-        const centroIds = metasAtuais.map((m) => m.centro_id);
-        let centrosPerfCalc: CentroPerf[] = [];
-
-        if (centroIds.length) {
-          const series = await fetchCentroSeriesRange(
-            centroIds,
-            toISO(startMes),
-            toISO(diaRefLocal)
-          );
-
-          const prodMesByCentro = new Map<number, number>();
-          const prodDiaByCentro = new Map<number, number>();
-
-          series.forEach((r: any) => {
-            if (isSundayISO(r.data_wip)) return; // ignora domingos
-            const cid = r.centro_id as number;
-            const val = Number(r.produzido_h) || 0;
-
-            prodMesByCentro.set(cid, (prodMesByCentro.get(cid) ?? 0) + val);
-
-            if (r.data_wip === lastDayIso) {
-              prodDiaByCentro.set(cid, (prodDiaByCentro.get(cid) ?? 0) + val);
-            }
-          });
-
-          centrosPerfCalc = centroIds.map((cid) => {
-            const metaInfo = metasByCentro.get(cid);
-            const metaDia = metaInfo?.metaDia ?? 0;
-            const codigo = metaInfo?.codigo ?? `#${cid}`;
-
-            const metaMes = metaDia * diasCorridosMes;
-            const realMes = prodMesByCentro.get(cid) ?? 0;
-            const realDia = prodDiaByCentro.get(cid) ?? 0;
-
-            const esperado = +(metaDia * frac).toFixed(2);
-
-            let aderDia: number | null = null;
-            if (!isFuture) {
-              if (esperado > 0) {
-                aderDia = (realDia / esperado) * 100;
-              } else if (isPast && metaDia > 0) {
-                aderDia = (realDia / metaDia) * 100;
-              } else {
-                aderDia = 0;
-              }
-            }
-
-            const aderMes =
-              metaMes > 0 ? (realMes / metaMes) * 100 : null;
-            const pctMetaDia =
-              metaDia > 0 ? (realDia / metaDia) * 100 : null;
-
-            return {
-              centro_id: cid,
-              codigo,
-              meta_dia: +metaDia.toFixed(2),
-              meta_mes: +metaMes.toFixed(2),
-              real_dia: +realDia.toFixed(2),
-              real_mes: +realMes.toFixed(2),
-              esperado_dia: esperado,
-              desvio_dia: +(realDia - esperado).toFixed(2),
-              ader_dia: aderDia !== null ? +aderDia.toFixed(2) : null,
-              pct_meta_dia:
-                pctMetaDia !== null ? +pctMetaDia.toFixed(2) : null,
-              ader_mes: aderMes !== null ? +aderMes.toFixed(2) : null,
-            };
-          });
-        }
-
-        if (!cancelled) {
-          setFactoryDays(serieFactory);
-          setCentrosPerf(centrosPerfCalc);
-        }
-      } catch (e) {
-        console.error(e);
-      } finally {
-        if (!cancelled) setLoading(false);
+        return;
       }
-    }
 
-    load();
-    return () => {
-      cancelled = true;
-    };
+      const diaRef = isoToLocalDate(lastDayIso);
+      const diaRefLocal = startOfDayLocal(diaRef);
+      //if (!cancelledRef.current) setRefDate(diaRefLocal);
+
+      // pega uploads do último dia e acha o ATIVO (ou o mais recente)
+      const uploadsDia: VUploadDia[] = await fetchUploadsPorDia(lastDayIso);
+      let ativo =
+        uploadsDia.find((u) => u.ativo) ??
+        uploadsDia
+          .slice()
+          .sort(
+            (a, b) =>
+              new Date(a.enviado_em).getTime() -
+              new Date(b.enviado_em).getTime()
+          )
+          .at(-1) ??
+        null;
+
+      let horaRef = '00:44';
+      if (ativo) {
+        const dt = new Date(ativo.enviado_em);
+        const dataStr = dt.toLocaleDateString('pt-BR', {
+          day: '2-digit',
+          month: '2-digit',
+        });
+        const horaStr = dt.toLocaleTimeString('pt-BR', {
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+        horaRef = horaStr;
+        if (!cancelledRef.current) {
+          setLastUpdateText(`${dataStr} • ${horaStr}`);
+          setHoraRefLabel(horaStr);
+        }
+      } else if (!cancelledRef.current) {
+        setLastUpdateText('Sem dados');
+        setHoraRefLabel('–:–');
+      }
+
+      // contexto do dia (igual Visão do dia)
+      const todayLocal = startOfDayLocal(new Date());
+      const isPast = diaRefLocal < todayLocal;
+      const isToday = diaRefLocal.getTime() === todayLocal.getTime();
+      const isFuture = !isPast && !isToday;
+      const frac = isPast ? 1 : isFuture ? 0 : fracDiaLogico(horaRef);
+
+      if (!cancelledRef.current) {
+        setContextDia({ isPast, isToday, isFuture, frac });
+      }
+
+      const startMes = new Date(
+        diaRefLocal.getFullYear(),
+        diaRefLocal.getMonth(),
+        1
+      );
+      const diasCorridosMes = countDaysExcludingSundays(startMes, diaRefLocal);
+
+      const startSerie = addDays(diaRefLocal, -13); // últimos ~14 dias
+
+      // ⬇️ AGORA BUSCA TAMBÉM OS CENTROS
+      const [metaTotal, metasAtuaisAll, fabRange, centrosSmart] =
+        await Promise.all([
+          fetchMetaTotalAtual(),
+          fetchMetasAtuais(),
+          fetchFabricaRange(toISO(startSerie), toISO(diaRefLocal)),
+          fetchCentrosSmart(),
+        ]);
+
+      const metaDiaTotal = Number(metaTotal) || 0;
+
+      // série da fábrica (removendo domingos, destacando sábados)
+      const dias = daysBetween(startSerie, diaRefLocal);
+      const fabMap = new Map<string, number>();
+      fabRange.forEach((r: any) => {
+        fabMap.set(r.data_wip, Number(r.produzido_h) || 0);
+      });
+
+      const serieFactory: FactoryDayRow[] = [];
+      for (const iso of dias) {
+        if (isSundayISO(iso)) continue; // remove domingo do gráfico
+        const prod = +(fabMap.get(iso) ?? 0).toFixed(2);
+        const pct = metaDiaTotal > 0 ? (prod / metaDiaTotal) * 100 : 100;
+        serieFactory.push({
+          iso,
+          label: shortBR(iso),
+          produzido: prod,
+          meta: metaDiaTotal,
+          pct,
+          isSaturday: isSaturdayISO(iso),
+        });
+      }
+
+      // ⬇️ MONTA CONJUNTO DE CENTROS ATIVOS NO DIA
+      const ativosSet = new Set<number>();
+      (centrosSmart as CentroSmart[]).forEach((c) => {
+        if (isCentroAtivoNoDia(c, diaRefLocal)) ativosSet.add(c.id);
+      });
+
+      // metas apenas dos centros ATIVOS
+      const metasAtuais = (metasAtuaisAll as VMetaAtual[]).filter((m) =>
+        ativosSet.has(m.centro_id)
+      );
+
+      // performance por centro (máquina) – mês inteiro e dia de referência
+      const metasByCentro = new Map<
+        number,
+        { metaDia: number; codigo: string }
+      >();
+      metasAtuais.forEach((m) => {
+        metasByCentro.set(m.centro_id, {
+          metaDia: Number(m.meta_horas) || 0,
+          codigo: m.centro,
+        });
+      });
+
+      const centroIds = metasAtuais.map((m) => m.centro_id);
+      let centrosPerfCalc: CentroPerf[] = [];
+
+      if (centroIds.length) {
+        const series = await fetchCentroSeriesRange(
+          centroIds,
+          toISO(startMes),
+          toISO(diaRefLocal)
+        );
+
+        const prodMesByCentro = new Map<number, number>();
+        const prodDiaByCentro = new Map<number, number>();
+
+        series.forEach((r: any) => {
+          if (isSundayISO(r.data_wip)) return; // ignora domingos
+          const cid = r.centro_id as number;
+          const val = Number(r.produzido_h) || 0;
+
+          prodMesByCentro.set(cid, (prodMesByCentro.get(cid) ?? 0) + val);
+
+          if (r.data_wip === lastDayIso) {
+            prodDiaByCentro.set(cid, (prodDiaByCentro.get(cid) ?? 0) + val);
+          }
+        });
+
+        centrosPerfCalc = centroIds.map((cid) => {
+          const metaInfo = metasByCentro.get(cid);
+          const metaDia = metaInfo?.metaDia ?? 0;
+          const codigo = metaInfo?.codigo ?? `#${cid}`;
+
+          const metaMes = metaDia * diasCorridosMes;
+          const realMes = prodMesByCentro.get(cid) ?? 0;
+          const realDia = prodDiaByCentro.get(cid) ?? 0;
+
+          const esperado = +(metaDia * frac).toFixed(2);
+
+          let aderDia: number | null = null;
+          if (!isFuture) {
+            if (esperado > 0) {
+              aderDia = (realDia / esperado) * 100;
+            } else if (isPast && metaDia > 0) {
+              aderDia = (realDia / metaDia) * 100;
+            } else {
+              aderDia = 0;
+            }
+          }
+
+          const aderMes =
+            metaMes > 0 ? (realMes / metaMes) * 100 : null;
+          const pctMetaDia =
+            metaDia > 0 ? (realDia / metaDia) * 100 : null;
+
+          return {
+            centro_id: cid,
+            codigo,
+            meta_dia: +metaDia.toFixed(2),
+            meta_mes: +metaMes.toFixed(2),
+            real_dia: +realDia.toFixed(2),
+            real_mes: +realMes.toFixed(2),
+            esperado_dia: esperado,
+            desvio_dia: +(realDia - esperado).toFixed(2),
+            ader_dia: aderDia !== null ? +aderDia.toFixed(2) : null,
+            pct_meta_dia:
+              pctMetaDia !== null ? +pctMetaDia.toFixed(2) : null,
+            ader_mes: aderMes !== null ? +aderMes.toFixed(2) : null,
+          };
+        });
+      }
+
+      if (!cancelledRef.current) {
+        setFactoryDays(serieFactory);
+        setCentrosPerf(centrosPerfCalc);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      if (!cancelledRef.current) setLoading(false);
+    }
   }, []);
+
+  // 1) primeiro carregamento
+  useEffect(() => {
+    cancelledRef.current = false;
+    loadData();
+    return () => {
+      cancelledRef.current = true;
+    };
+  }, [loadData]);
+
+  // 2) Realtime: sempre que mudar upload_dia_ativo, recarrega painel
+  useEffect(() => {
+    const channel = supabase
+      .channel('tv-uploads-kiosk')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'upload_dia_ativo',
+        },
+        () => {
+          loadData();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [loadData]);
+
+  // 3) Fallback: recarrega o painel periodicamente (modo TV)
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      loadData();
+    }, 60000); // 60.000 ms = 1 minuto
+
+    return () => window.clearInterval(id);
+  }, [loadData]);
 
   // resumo de mês e dia da fábrica a partir dos centros
   const resumo = useMemo(() => {
