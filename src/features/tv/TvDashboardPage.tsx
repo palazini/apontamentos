@@ -229,7 +229,6 @@ export default function TvDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [factoryDays, setFactoryDays] = useState<FactoryDayRow[]>([]);
   const [centrosPerf, setCentrosPerf] = useState<CentroPerf[]>([]);
-  const [refDate, setRefDate] = useState<Date | null>(null);
   const [lastUpdateText, setLastUpdateText] = useState<string>('–');
   const [horaRefLabel, setHoraRefLabel] = useState<string>('–:–');
   const [contextDia, setContextDia] = useState<{
@@ -272,7 +271,6 @@ export default function TvDashboardPage() {
             setFactoryDays([]);
             setCentrosPerf([]);
             setLastUpdateText('Sem dados');
-            setRefDate(null);
             setHoraRefLabel('–:–');
           }
           return;
@@ -280,7 +278,7 @@ export default function TvDashboardPage() {
 
         const diaRef = isoToLocalDate(lastDayIso);
         const diaRefLocal = startOfDayLocal(diaRef);
-        if (!cancelled) setRefDate(diaRefLocal);
+        //if (!cancelled) setRefDate(diaRefLocal);
 
         // pega uploads do último dia e acha o ATIVO (ou o mais recente)
         const uploadsDia: VUploadDia[] = await fetchUploadsPorDia(lastDayIso);
