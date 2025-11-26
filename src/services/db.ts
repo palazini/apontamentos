@@ -81,6 +81,22 @@ export type FuncionarioMes = {
   produzido_h: number;
 };
 
+export type PainelUltimoUpload = {
+  data_wip: string;   // 'YYYY-MM-DD'
+  enviado_em: string; // timestamptz
+};
+
+export type PainelMaquinaResumo = {
+  data_wip: string;             // 'YYYY-MM-DD'
+  ano_mes: string;              // 'YYYY-MM-01'
+  centro_id: number;
+  codigo: string;
+  meta_diaria_horas: number;
+  produzido_dia_horas: number;
+  produzido_mes_horas: number;
+};
+
+
 
 /* ===== Metas & Totais (visões) ===== */
 export async function fetchMetasAtuais(): Promise<VMetaAtual[]> {
@@ -200,6 +216,21 @@ export async function setUploadAtivo(dateISO: string, uploadId: number) {
   if (error) throw error;
 }
 
+export async function fetchPainelUltimoUpload(): Promise<PainelUltimoUpload | null> {
+  const { data, error } = await supabase
+    .from('v_uploads_por_dia')
+    .select('data_wip, enviado_em')
+    .eq('ativo', true)
+    .order('data_wip', { ascending: false })
+    .order('enviado_em', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return (data as PainelUltimoUpload) ?? null;
+}
+
+
 /* ===== Séries (gráficos) ===== */
 export async function fetchFabricaRange(startISO: string, endISO: string): Promise<FabricaDia[]> {
   const { data, error } = await supabase
@@ -224,6 +255,25 @@ export async function fetchCentroSeriesRange(centroIds: number[], startISO: stri
   if (error) throw error;
   return (data ?? []) as CentroDia[];
 }
+
+export async function fetchPainelMaquinasResumo(
+  diaISO: string,
+  anoMesISO: string
+): Promise<PainelMaquinaResumo[]> {
+  let query = supabase
+    .from('v_painel_maquinas_resumo')
+    .select('data_wip, ano_mes, centro_id, codigo, meta_diaria_horas, produzido_dia_horas, produzido_mes_horas')
+    .eq('data_wip', diaISO);
+
+  if (anoMesISO) {
+    query = query.eq('ano_mes', anoMesISO);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data ?? []) as PainelMaquinaResumo[];
+}
+
 
 export async function fetchMetaTotalAtual(): Promise<number> {
   const { data, error } = await supabase

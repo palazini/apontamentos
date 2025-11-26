@@ -7,11 +7,13 @@ import UploadDetalhePage from './features/upload/UploadDetalhePage';
 import ConfigGeralPage from './features/config/ConfigGeralPage';
 import RendimentoPage from './features/funcionario/RendFuncionarioPage';
 import FuncionariosMetaPage from './features/funcionarios/FuncionariosMetaPage';
+import TvDashboardPage from './features/tv/TvDashboardPage'; // ⬅ NOVO
 
 export default function App() {
   return (
     <BrowserRouter>
       <Routes>
+        {/* Rotas normais com Layout (sidebar, header, etc.) */}
         <Route element={<Layout />}>
           <Route index element={<Navigate to="/dia" replace />} />
           <Route path="/upload" element={<UploadPage />} />
@@ -22,6 +24,9 @@ export default function App() {
           <Route path="/graficos" element={<GraficosPage />} />
           <Route path="/config" element={<ConfigGeralPage />} />
         </Route>
+
+        {/* Rota da TV em modo kiosk (sem Layout) */}
+        <Route path="/tv" element={<TvDashboardPage />} />
       </Routes>
     </BrowserRouter>
   );
