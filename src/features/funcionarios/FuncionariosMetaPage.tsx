@@ -332,14 +332,43 @@ export default function FuncionariosMetaPage() {
     });
   }, [metas, dadosDia, dadosMes, diasCorridos, diasUteisMes]);
 
+  // ====== TOTAIS ======
+  const totalMetaDiaria = useMemo(
+    () => linhas.reduce((s, l) => s + l.meta_diaria_horas, 0),
+    [linhas]
+  );
+
+  const totalMetaAcumulada = useMemo(
+    () => linhas.reduce((s, l) => s + l.meta_acumulada, 0),
+    [linhas]
+  );
+
   const totalMetaMensal = useMemo(
     () => linhas.reduce((s, l) => s + l.meta_mensal, 0),
     [linhas]
   );
+
+  const totalRealDia = useMemo(
+    () => linhas.reduce((s, l) => s + l.real_dia, 0),
+    [linhas]
+  );
+
   const totalRealMensal = useMemo(
     () => linhas.reduce((s, l) => s + l.real_mes, 0),
     [linhas]
   );
+
+  const perfDiaGlobal = useMemo(() => {
+    if (totalMetaDiaria <= 0) return null;
+    const v = (totalRealDia / totalMetaDiaria) * 100;
+    return Number.isFinite(v) ? v : null;
+  }, [totalMetaDiaria, totalRealDia]);
+
+  const perfMesGlobal = useMemo(() => {
+    if (totalMetaMensal <= 0) return null;
+    const v = (totalRealMensal / totalMetaMensal) * 100;
+    return Number.isFinite(v) ? v : null;
+  }, [totalMetaMensal, totalRealMensal]);
 
   /* -------- helpers de UI -------- */
   const formatNum = (v: number, dec = 2) =>
@@ -610,6 +639,57 @@ export default function FuncionariosMetaPage() {
                 </Table.Tr>
               ))}
             </Table.Tbody>
+
+            {/* ===== Rodapé com totais ===== */}
+            <Table.Tfoot>
+              <Table.Tr
+                style={{
+                  backgroundColor: 'var(--mantine-color-gray-0)', // fundo levemente cinza
+                  fontWeight: 600,                                // deixa o texto mais forte
+                  borderTop: '2px solid var(--mantine-color-gray-3)', // separador mais marcado
+                }}
+              >
+                <Table.Td>
+                  <Text fw={700}>Totais</Text>
+                </Table.Td>
+                <Table.Td />
+                <Table.Td style={{ textAlign: 'right' }}>
+                  <Text fw={600}>{formatNum(totalMetaDiaria)}</Text>
+                </Table.Td>
+                <Table.Td style={{ textAlign: 'right' }}>
+                  <Text fw={600}>{formatNum(totalMetaAcumulada)}</Text>
+                </Table.Td>
+                <Table.Td style={{ textAlign: 'right' }}>
+                  <Text fw={600}>{formatNum(totalMetaMensal)}</Text>
+                </Table.Td>
+                <Table.Td style={{ textAlign: 'right' }}>
+                  <Text fw={600}>{formatNum(totalRealDia)}</Text>
+                </Table.Td>
+                <Table.Td style={{ textAlign: 'right' }}>
+                  <Text fw={600}>{formatNum(totalRealMensal)}</Text>
+                </Table.Td>
+                <Table.Td style={{ textAlign: 'right' }}>
+                  {perfDiaGlobal == null ? (
+                    '-'
+                  ) : (
+                    <Text c={perfColor(perfDiaGlobal)} fw={700}>
+                      {formatNum(perfDiaGlobal)}%
+                    </Text>
+                  )}
+                </Table.Td>
+                <Table.Td style={{ textAlign: 'right' }}>
+                  {perfMesGlobal == null ? (
+                    '-'
+                  ) : (
+                    <Text c={perfColor(perfMesGlobal)} fw={700}>
+                      {formatNum(perfMesGlobal)}%
+                    </Text>
+                  )}
+                </Table.Td>
+                <Table.Td />
+                <Table.Td />
+              </Table.Tr>
+            </Table.Tfoot>
           </Table>
         )}
       </Card>
