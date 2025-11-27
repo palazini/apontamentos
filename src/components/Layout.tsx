@@ -1,13 +1,7 @@
 // src/components/Layout.tsx
+import type { ReactNode } from 'react';
 import { Link, useLocation, Outlet } from 'react-router-dom';
-import {
-  AppShell,
-  NavLink,
-  Group,
-  Text,
-  Image,
-  Badge,
-} from '@mantine/core';
+import { AppShell, NavLink, Group, Text, Image, Badge } from '@mantine/core';
 import {
   IconCalendarTime,
   IconChartHistogram,
@@ -15,6 +9,7 @@ import {
   IconSettings,
   IconUsers,
   IconGauge,
+  IconDeviceTv,
 } from '@tabler/icons-react';
 
 function Brand() {
@@ -28,7 +23,7 @@ function Brand() {
 type LinkItem = {
   label: string;
   to: string;
-  icon: React.ReactNode;
+  icon: ReactNode;
   exact?: boolean; // quando false, marca ativo também nas subrotas
 };
 
@@ -64,6 +59,12 @@ const links: LinkItem[] = [
     exact: false,
   },
   {
+    label: 'Modo TV',
+    to: '/tv',
+    icon: <IconDeviceTv size={16} />,
+    exact: true,
+  },
+  {
     label: 'Configurações',
     to: '/config',
     icon: <IconSettings size={16} />,
@@ -91,7 +92,9 @@ export default function Layout() {
           <Link to="/" style={{ textDecoration: 'none', color: 'inherit' }}>
             <Brand />
           </Link>
-          <Badge variant="light" color="gray">v0.1</Badge>
+          <Badge variant="light" color="gray">
+            v0.1
+          </Badge>
         </Group>
       </AppShell.Header>
 
