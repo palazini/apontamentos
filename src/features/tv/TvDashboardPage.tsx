@@ -12,6 +12,7 @@ import {
   Title,
   Progress,
   RingProgress,
+  ThemeIcon,
 } from '@mantine/core';
 import {
   ResponsiveContainer,
@@ -22,14 +23,16 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip as ReTooltip,
-  Legend,
   Cell,
+  LabelList,
 } from 'recharts';
 import {
   IconChevronLeft,
   IconChevronRight,
   IconMaximize,
   IconMinimize,
+  IconTrendingUp,
+  IconClock,
 } from '@tabler/icons-react';
 
 import {
@@ -100,7 +103,6 @@ function shortBR(iso: string) {
   return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
 }
 
-// mesmo parse da página "Visão do dia"
 function parseLocalDateString(input: string | null | undefined): Date | null {
   if (!input) return null;
   let s = input.trim();
@@ -116,13 +118,6 @@ function parseLocalDateString(input: string | null | undefined): Date | null {
   return null;
 }
 
-/** Centro ativo no dia do WIP?
- *  - Se ativo === false → inativo
- *  - Se desativado_desde !== null:
- *      * ativo SE dataWip < desativado_desde
- *      * inativo SE dataWip >= desativado_desde
- *  - Caso contrário, ativo.
- */
 function isCentroAtivoNoDia(c: CentroSmart, dataWip: Date): boolean {
   if (c.ativo === false) return false;
 
@@ -159,10 +154,9 @@ type CentroPerf = {
   // novo: cálculo “modo Visão do dia”
   esperado_dia: number;
   desvio_dia: number;
-  ader_dia: number | null; // produzido / esperado (ou meta cheia em dia passado)
-  pct_meta_dia: number | null; // produzido / meta_dia
+  ader_dia: number | null; 
+  pct_meta_dia: number | null; 
 
-  // ainda usamos o mês só para o RESUMO do cabeçalho
   ader_mes: number | null;
 };
 
@@ -222,6 +216,31 @@ function FactoryTooltip({ active, payload, label }: any) {
   );
 }
 
+/* ========= label customizado das colunas (Otimizado para TV) ========= */
+function FactoryBarLabel(props: any) {
+  const { x, y, width, height, value } = props;
+  if (value == null) return null;
+
+  // Se a coluna for muito baixa, esconde para não sobrepor o eixo
+  if (!height || height < 20) return null;
+
+  const text = Number(value).toFixed(1); 
+
+  return (
+    <text
+      x={x + width / 2}
+      y={y - 10} // Subi um pouco mais para dar respiro
+      textAnchor="middle"
+      fontSize={16} // Aumentei para leitura de longe
+      fontWeight={700}
+      fill="#374151"
+      style={{ pointerEvents: 'none' }}
+    >
+      {text}
+    </text>
+  );
+}
+
 /* ========= componente principal ========= */
 export default function TvDashboardPage() {
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -231,7 +250,9 @@ export default function TvDashboardPage() {
   const [factoryDays, setFactoryDays] = useState<FactoryDayRow[]>([]);
   const [centrosPerf, setCentrosPerf] = useState<CentroPerf[]>([]);
   const [lastUpdateText, setLastUpdateText] = useState<string>('–');
-  const [horaRefLabel, setHoraRefLabel] = useState<string>('–:–');
+  
+  // REMOVIDO: horaRefLabel pois não estava sendo usado na interface
+  
   const [contextDia, setContextDia] = useState<{
     isPast: boolean;
     isToday: boolean;
@@ -271,16 +292,13 @@ export default function TvDashboardPage() {
           setFactoryDays([]);
           setCentrosPerf([]);
           setLastUpdateText('Sem dados');
-          setHoraRefLabel('–:–');
         }
         return;
       }
 
       const diaRef = isoToLocalDate(lastDayIso);
       const diaRefLocal = startOfDayLocal(diaRef);
-      //if (!cancelledRef.current) setRefDate(diaRefLocal);
-
-      // pega uploads do último dia e acha o ATIVO (ou o mais recente)
+      
       const uploadsDia: VUploadDia[] = await fetchUploadsPorDia(lastDayIso);
       let ativo =
         uploadsDia.find((u) => u.ativo) ??
@@ -308,14 +326,12 @@ export default function TvDashboardPage() {
         horaRef = horaStr;
         if (!cancelledRef.current) {
           setLastUpdateText(`${dataStr} • ${horaStr}`);
-          setHoraRefLabel(horaStr);
         }
       } else if (!cancelledRef.current) {
         setLastUpdateText('Sem dados');
-        setHoraRefLabel('–:–');
       }
 
-      // contexto do dia (igual Visão do dia)
+      // contexto do dia
       const todayLocal = startOfDayLocal(new Date());
       const isPast = diaRefLocal < todayLocal;
       const isToday = diaRefLocal.getTime() === todayLocal.getTime();
@@ -335,7 +351,7 @@ export default function TvDashboardPage() {
 
       const startSerie = addDays(diaRefLocal, -13); // últimos ~14 dias
 
-      // ⬇️ AGORA BUSCA TAMBÉM OS CENTROS
+      // ⬇️ BUSCA DADOS
       const [metaTotal, metasAtuaisAll, fabRange, centrosSmart] =
         await Promise.all([
           fetchMetaTotalAtual(),
@@ -346,7 +362,7 @@ export default function TvDashboardPage() {
 
       const metaDiaTotal = Number(metaTotal) || 0;
 
-      // série da fábrica (removendo domingos, destacando sábados)
+      // série da fábrica
       const dias = daysBetween(startSerie, diaRefLocal);
       const fabMap = new Map<string, number>();
       fabRange.forEach((r: any) => {
@@ -355,7 +371,7 @@ export default function TvDashboardPage() {
 
       const serieFactory: FactoryDayRow[] = [];
       for (const iso of dias) {
-        if (isSundayISO(iso)) continue; // remove domingo do gráfico
+        if (isSundayISO(iso)) continue; 
         const prod = +(fabMap.get(iso) ?? 0).toFixed(2);
         const pct = metaDiaTotal > 0 ? (prod / metaDiaTotal) * 100 : 100;
         serieFactory.push({
@@ -368,18 +384,16 @@ export default function TvDashboardPage() {
         });
       }
 
-      // ⬇️ MONTA CONJUNTO DE CENTROS ATIVOS NO DIA
+      // ⬇️ CENTROS ATIVOS
       const ativosSet = new Set<number>();
       (centrosSmart as CentroSmart[]).forEach((c) => {
         if (isCentroAtivoNoDia(c, diaRefLocal)) ativosSet.add(c.id);
       });
 
-      // metas apenas dos centros ATIVOS
       const metasAtuais = (metasAtuaisAll as VMetaAtual[]).filter((m) =>
         ativosSet.has(m.centro_id)
       );
 
-      // performance por centro (máquina) – mês inteiro e dia de referência
       const metasByCentro = new Map<
         number,
         { metaDia: number; codigo: string }
@@ -405,7 +419,7 @@ export default function TvDashboardPage() {
         const prodDiaByCentro = new Map<number, number>();
 
         series.forEach((r: any) => {
-          if (isSundayISO(r.data_wip)) return; // ignora domingos
+          if (isSundayISO(r.data_wip)) return;
           const cid = r.centro_id as number;
           const val = Number(r.produzido_h) || 0;
 
@@ -471,7 +485,6 @@ export default function TvDashboardPage() {
     }
   }, []);
 
-  // 1) primeiro carregamento
   useEffect(() => {
     cancelledRef.current = false;
     loadData();
@@ -480,48 +493,28 @@ export default function TvDashboardPage() {
     };
   }, [loadData]);
 
-  // 2) Realtime: sempre que mudar upload_dia_ativo, recarrega painel
   useEffect(() => {
     const channel = supabase
       .channel('tv-uploads-kiosk')
       .on(
         'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'upload_dia_ativo',
-        },
-        () => {
-          loadData();
-        }
+        { event: '*', schema: 'public', table: 'upload_dia_ativo' },
+        () => { loadData(); }
       )
       .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, [loadData]);
 
-  // 3) Fallback: recarrega o painel periodicamente (modo TV)
   useEffect(() => {
-    const id = window.setInterval(() => {
-      loadData();
-    }, 60000); // 60.000 ms = 1 minuto
-
+    const id = window.setInterval(() => { loadData(); }, 60000);
     return () => window.clearInterval(id);
   }, [loadData]);
 
-  // resumo de mês e dia da fábrica a partir dos centros
   const resumo = useMemo(() => {
     if (!centrosPerf.length) {
       return {
-        metaMes: 0,
-        realMes: 0,
-        aderMes: null as number | null,
-        metaDia: 0,
-        realDia: 0,
-        esperadoDia: 0,
-        aderDia: null as number | null,
+        metaMes: 0, realMes: 0, aderMes: null as number | null,
+        metaDia: 0, realDia: 0, esperadoDia: 0, aderDia: null as number | null,
       };
     }
     const metaMes = centrosPerf.reduce((s, c) => s + c.meta_mes, 0);
@@ -546,13 +539,12 @@ export default function TvDashboardPage() {
     return { metaMes, realMes, aderMes, metaDia, realDia, esperadoDia, aderDia };
   }, [centrosPerf, contextDia]);
 
-  // slides das máquinas – quebrados em páginas (8 por tela)
   const centrosOrdenados = useMemo(
     () =>
       [...centrosPerf].sort((a, b) => {
         const pa = a.ader_dia ?? -Infinity;
         const pb = b.ader_dia ?? -Infinity;
-        return pb - pa; // melhor aderência do dia primeiro
+        return pb - pa;
       }),
     [centrosPerf]
   );
@@ -562,21 +554,18 @@ export default function TvDashboardPage() {
     [centrosOrdenados]
   );
 
-  const totalSlides = 1 + Math.max(centroPages.length, 1); // 1 fábrica + N máquinas
+  const totalSlides = 1 + Math.max(centroPages.length, 1);
 
-  // autoplay de slides
   useEffect(() => {
     if (!totalSlides) return;
     const id = window.setInterval(() => {
       setActiveSlide((prev) => (prev + 1) % totalSlides);
-    }, 15000); // 15s por slide
+    }, 15000); 
     return () => window.clearInterval(id);
   }, [totalSlides]);
 
-  const goPrev = () =>
-    setActiveSlide((prev) => (prev - 1 + totalSlides) % totalSlides);
-  const goNext = () =>
-    setActiveSlide((prev) => (prev + 1) % totalSlides);
+  const goPrev = () => setActiveSlide((prev) => (prev - 1 + totalSlides) % totalSlides);
+  const goNext = () => setActiveSlide((prev) => (prev + 1) % totalSlides);
 
   /* ========= render ========= */
   return (
@@ -591,137 +580,106 @@ export default function TvDashboardPage() {
       }}
     >
       <Stack h="100%" gap="sm">
-        {/* Cabeçalho enxuto */}
+        {/* Cabeçalho */}
         <Group justify="space-between" align="center">
           <Group gap="sm" align="center">
+            <ThemeIcon size="lg" radius="md" color="blue" variant="light">
+               <IconTrendingUp size={20} />
+            </ThemeIcon>
             <Title order={2}>Painel de Produção - Usinagem</Title>
           </Group>
 
           <Group gap="lg" align="center">
-            {/* visão geral MÊS / DIA */}
-            <Group gap="xs">
-              <Badge variant="filled" color="violet">
-                MÊS • Meta: {formatNum(resumo.metaMes)} h
-              </Badge>
-              <Badge variant="filled" color="blue">
-                MÊS • Real: {formatNum(resumo.realMes)} h
-              </Badge>
-              <Badge
-                variant="filled"
-                color={perfColor(resumo.aderMes)}
-              >
-                MÊS • Ader.:{' '}
-                {resumo.aderMes == null
-                  ? '-'
-                  : `${formatNum(resumo.aderMes, 1)}%`}
-              </Badge>
-            </Group>
+            {/* KPI CHIPS MÊS */}
+            <Card padding="xs" radius="md" withBorder shadow="xs" bg="white">
+               <Group gap="xs">
+                 <Text size="xs" fw={700} c="dimmed">MÊS</Text>
+                 <Badge variant="light" color="gray" size="lg">Meta: {formatNum(resumo.metaMes)}h</Badge>
+                 <Badge variant="filled" color="blue" size="lg">Real: {formatNum(resumo.realMes)}h</Badge>
+                 <Badge variant="filled" color={perfColor(resumo.aderMes)} size="lg">
+                    {resumo.aderMes == null ? '-' : `${formatNum(resumo.aderMes, 1)}%`}
+                 </Badge>
+               </Group>
+            </Card>
 
-            <Group gap="xs">
-              <Badge variant="outline" color="violet">
-                DIA • Meta: {formatNum(resumo.metaDia)} h
-              </Badge>
-              <Badge variant="outline" color="blue">
-                DIA • Esperado: {formatNum(resumo.esperadoDia)} h
-              </Badge>
-              <Badge variant="outline" color="blue">
-                DIA • Real: {formatNum(resumo.realDia)} h
-              </Badge>
-              <Badge
-                variant="outline"
-                color={perfColor(resumo.aderDia)}
-              >
-                DIA • Ader.:{' '}
-                {resumo.aderDia == null
-                  ? '-'
-                  : `${formatNum(resumo.aderDia, 1)}%`}
-              </Badge>
-            </Group>
+            {/* KPI CHIPS DIA */}
+            <Card padding="xs" radius="md" withBorder shadow="xs" bg="white">
+               <Group gap="xs">
+                 <Text size="xs" fw={700} c="dimmed">DIA</Text>
+                 <Badge variant="light" color="gray" size="lg">Meta: {formatNum(resumo.metaDia)}h</Badge>
+                 <Badge variant="outline" color="blue" size="lg">Real: {formatNum(resumo.realDia)}h</Badge>
+                 <Badge variant="outline" color={perfColor(resumo.aderDia)} size="lg">
+                    {resumo.aderDia == null ? '-' : `${formatNum(resumo.aderDia, 1)}%`}
+                 </Badge>
+               </Group>
+            </Card>
 
-            <Stack gap={0} align="flex-end">
-              <Text size="xs" c="dimmed">
-                Última atualização
-              </Text>
-              <Text fw={700} size="lg">
-                {lastUpdateText}
-              </Text>
-              <Text size="xs" c="dimmed">
-                Aderência do dia considera meta até {horaRefLabel}
-              </Text>
-            </Stack>
+            {/* STATUS DE ATUALIZAÇÃO - AGORA DESTACADO */}
+            <Card padding="sm" radius="md" withBorder shadow="sm" bg="gray.1">
+                <Group gap="sm">
+                  <ThemeIcon size="lg" radius="xl" color="teal" variant="filled">
+                     <IconClock size={20} />
+                  </ThemeIcon>
+                  <Stack gap={0}>
+                     <Text size="xs" c="dimmed" fw={700} tt="uppercase">Atualizado em</Text>
+                     <Text size="lg" fw={900} c="dark">{lastUpdateText}</Text>
+                  </Stack>
+                </Group>
+            </Card>
 
-            <ActionIcon
-              variant="light"
-              radius="xl"
-              size="lg"
-              onClick={toggleFullscreen}
-              aria-label="Tela cheia"
-            >
-              {isFullscreen ? (
-                <IconMinimize size={18} />
-              ) : (
-                <IconMaximize size={18} />
-              )}
+            <ActionIcon variant="subtle" color="gray" onClick={toggleFullscreen}>
+              {isFullscreen ? <IconMinimize size={20} /> : <IconMaximize size={20} />}
             </ActionIcon>
           </Group>
         </Group>
 
-        {/* Cartão principal com slides */}
+        {/* Área Principal */}
         <Card
           withBorder
           shadow="sm"
           radius="lg"
           padding="lg"
-          style={{
-            flex: 1,
-            display: 'flex',
-            flexDirection: 'column',
-            minHeight: 0,
-          }}
+          style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}
         >
           {loading ? (
             <Group justify="center" align="center" style={{ height: '100%' }}>
-              <Loader />
+              <Loader size="xl" />
             </Group>
           ) : (
             <>
-              {/* topo do card: navegação de slides */}
+              {/* Paginação */}
               <Group justify="space-between" mb="xs" align="center">
                 <Group gap="xs" align="center">
-                  <ActionIcon
-                    variant="light"
-                    radius="xl"
-                    onClick={goPrev}
-                    aria-label="Slide anterior"
-                    size="md"
-                  >
-                    <IconChevronLeft size={16} />
-                  </ActionIcon>
-                  <Group gap={4}>
+                   {/* Navegação Manual */}
+                   <ActionIcon variant="light" radius="xl" onClick={goPrev} size="lg">
+                     <IconChevronLeft size={18} />
+                   </ActionIcon>
+                   
+                   <Group gap={6}>
                     {Array.from({ length: totalSlides }).map((_, idx) => (
                       <ActionIcon
                         key={idx}
                         radius="xl"
-                        size="xs"
-                        variant={idx === activeSlide ? 'filled' : 'outline'}
+                        size="sm"
+                        variant={idx === activeSlide ? 'filled' : 'light'}
                         color={idx === activeSlide ? 'blue' : 'gray'}
                         onClick={() => setActiveSlide(idx)}
                       />
                     ))}
-                  </Group>
-                  <ActionIcon
-                    variant="light"
-                    radius="xl"
-                    onClick={goNext}
-                    aria-label="Próximo slide"
-                    size="md"
-                  >
-                    <IconChevronRight size={16} />
-                  </ActionIcon>
+                   </Group>
+
+                   <ActionIcon variant="light" radius="xl" onClick={goNext} size="lg">
+                     <IconChevronRight size={18} />
+                   </ActionIcon>
                 </Group>
+                
+                {/* Indicador do Slide Atual */}
+                <Text fw={600} c="dimmed" size="sm">
+                    {activeSlide === 0 ? "Visão Geral da Fábrica" : `Máquinas - Pág ${activeSlide} de ${centroPages.length}`}
+                </Text>
               </Group>
 
-              {/* conteúdo dos slides */}
+              {/* Slide Content */}
               <div style={{ flex: 1, minHeight: 0 }}>
                 {activeSlide === 0 ? (
                   <SlideFactory dias={factoryDays} />
@@ -740,79 +698,107 @@ export default function TvDashboardPage() {
   );
 }
 
-/* ========= Slide 1 – Fábrica (gráfico diário) ========= */
+/* ========= Slide 1 – Fábrica ========= */
 function SlideFactory({ dias }: { dias: FactoryDayRow[] }) {
   if (!dias.length) {
     return (
       <Group justify="center" align="center" style={{ height: '100%' }}>
-        <Text c="dimmed">Sem dados recentes para exibir.</Text>
+        <Text c="dimmed" size="lg">Sem dados recentes para exibir.</Text>
       </Group>
     );
   }
 
   return (
-    <Stack gap="xs" style={{ height: '100%' }}>
+    <Stack gap="md" style={{ height: '100%' }}>
       <Group justify="space-between" align="center">
-        <Title order={3}>Fábrica • Últimos dias</Title>
-        <Badge variant="outline" color="blue">
-          Sábados em azul
-        </Badge>
+        <Title order={3}>Produção Diária (Últimos 14 dias)</Title>
+        <Group>
+            <Badge size="lg" variant="dot" color="orange">Dia Útil</Badge>
+            <Badge size="lg" variant="dot" color="blue">Sábado</Badge>
+        </Group>
       </Group>
 
+      {/* Gráfico */}
       <div style={{ flex: 1, minHeight: 0 }}>
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={dias}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="label" />
-            <YAxis />
-            <ReTooltip content={<FactoryTooltip />} />
-            <Legend />
+          <ComposedChart data={dias} margin={{ top: 30, right: 0, left: 0, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.4} />
+            <XAxis 
+                dataKey="label" 
+                tick={{ fontSize: 14, fontWeight: 500 }} 
+                tickMargin={10}
+            />
+            {/* Eixo Y oculto para limpar visual */}
+            <YAxis hide /> 
+            <ReTooltip content={<FactoryTooltip />} cursor={{ fill: 'rgba(0,0,0,0.05)' }}/>
+            
             <Bar
               dataKey="produzido"
               name="Produzido (h)"
-              radius={[8, 8, 0, 0]}
+              radius={[6, 6, 0, 0]}
+              isAnimationActive={true}
             >
               {dias.map((d, i) => (
-                <Cell key={i} fill={d.isSaturday ? '#0ea5e9' : '#f97316'} />
+                <Cell key={i} fill={d.isSaturday ? '#3b82f6' : '#f97316'} />
               ))}
+              <LabelList dataKey="produzido" content={<FactoryBarLabel />} />
             </Bar>
+            
             <Line
-              type="linear"
+              type="monotone"
               dataKey="meta"
               name="Meta diária (h)"
-              stroke="#111827"
-              strokeDasharray="6 6"
+              stroke="#1f2937"
+              strokeDasharray="5 5"
               dot={false}
-              strokeWidth={2}
+              strokeWidth={3}
             />
           </ComposedChart>
         </ResponsiveContainer>
       </div>
+
+      {/* Grid de Resumo estilo "Data Table Cards" */}
+      <SimpleGrid cols={Math.min(dias.length, 7)} spacing="sm" mt="xs">
+        {dias.slice(-7).map((d) => ( // Mostra apenas os ultimos 7 cards embaixo pra não ficar pequeno
+          <Card 
+            key={d.iso} 
+            padding="sm" 
+            radius="md" 
+            withBorder 
+            style={{ borderTop: `4px solid var(--mantine-color-${perfColor(d.pct)}-filled)` }}
+          >
+            <Stack gap={2} align="center">
+              <Text size="sm" fw={700} c="dimmed">
+                {d.label}
+              </Text>
+              <Text size="xl" fw={800}>
+                {d.produzido.toFixed(0)}h
+              </Text>
+              <Badge variant="light" size="sm" color={perfColor(d.pct)}>
+                {d.pct.toFixed(0)}%
+              </Badge>
+            </Stack>
+          </Card>
+        ))}
+      </SimpleGrid>
     </Stack>
   );
 }
 
-/* ========= Slides de Máquinas (somente DIA) ========= */
-
-function SlideMaquinas({
-  page,
-  isFuture,
-}: {
-  page: CentroPerf[];
-  isFuture: boolean;
-}) {
+/* ========= Slide 2+ – Máquinas (MODO TV / KIOSK) ========= */
+function SlideMaquinas({ page, isFuture }: { page: CentroPerf[]; isFuture: boolean }) {
   if (!page.length) {
     return (
       <Group justify="center" align="center" style={{ height: '100%' }}>
-        <Text c="dimmed">Nenhuma máquina com meta cadastrada.</Text>
+        <Text c="dimmed" size="xl">Nenhuma máquina com meta cadastrada.</Text>
       </Group>
     );
   }
 
   return (
-    <Stack gap="xs" style={{ height: '100%' }}>
+    <Stack gap="md" style={{ height: '100%' }}>
       <Group justify="space-between" align="center">
-        <Title order={3}>Máquinas • Visão do dia</Title>
+        <Title order={2}>Performance por Máquina • Visão do Dia</Title>
       </Group>
 
       <SimpleGrid
@@ -822,10 +808,8 @@ function SlideMaquinas({
         style={{ flex: 1, minHeight: 0 }}
       >
         {page.map((c) => {
-          const pctEsperado =
-            c.esperado_dia > 0 ? (c.real_dia / c.esperado_dia) * 100 : 0;
-          const pctMeta =
-            c.meta_dia > 0 ? (c.real_dia / c.meta_dia) * 100 : 0;
+          const pctEsperado = c.esperado_dia > 0 ? (c.real_dia / c.esperado_dia) * 100 : 0;
+          const pctMeta = c.meta_dia > 0 ? (c.real_dia / c.meta_dia) * 100 : 0;
           const cor = perfColor(c.ader_dia);
 
           return (
@@ -833,112 +817,91 @@ function SlideMaquinas({
               key={c.centro_id}
               withBorder
               radius="lg"
-              padding="md"
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-              }}
+              padding="lg" // Aumentado padding interno
+              style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}
             >
-              <Stack gap="xs" style={{ height: '100%' }}>
-                {/* topo: identificação + badge de aderência */}
+              <Stack gap="md" style={{ height: '100%' }}>
+                
+                {/* 1. Cabeçalho: Nome Grande + Badge Grande */}
                 <Group justify="space-between" align="flex-start">
-                  <Text fw={700}>{c.codigo}</Text>
+                  <Text fw={900} size="xl" style={{ fontSize: '1.5rem' }}>{c.codigo}</Text>
                   {isFuture ? (
-                    <Badge variant="light" color="gray" size="sm">
-                      FUTURO
-                    </Badge>
+                    <Badge variant="light" color="gray" size="lg">FUTURO</Badge>
                   ) : (
-                    <Badge color={cor} size="sm">
-                      {c.ader_dia == null
-                        ? '-'
-                        : `${formatNum(c.ader_dia, 1)}%`}
+                    <Badge color={cor} variant="filled" size="xl">
+                      {c.ader_dia == null ? '-' : `${formatNum(c.ader_dia, 0)}%`}
                     </Badge>
                   )}
                 </Group>
 
-                {/* centro: anel com a % do dia */}
-                <Stack
-                  gap="xs"
-                  align="center"
-                  style={{ flex: 1, minHeight: 0 }}
-                >
+                {/* 2. Centro: Gráfico + Valores GIGANTES */}
+                <Group gap="md" align="center" style={{ flex: 1 }} wrap="nowrap">
                   <RingProgress
-                    size={120}
-                    thickness={12}
+                    size={130} // Levemente maior
+                    thickness={14} // Mais espesso
                     roundCaps
-                    sections={[
-                      {
-                        value: clamp(c.ader_dia ?? 0, 0, 200),
-                        color: perfColor(c.ader_dia),
-                      },
-                    ]}
+                    sections={[{ value: clamp(c.ader_dia ?? 0, 0, 200), color: perfColor(c.ader_dia) }]}
                     label={
-                      <Stack gap={0} align="center">
-                        <Text size="xs" c="dimmed">
-                          Hoje
+                        <Text ta="center" size="md" fw={900} c={cor}>
+                           {c.ader_dia ? `${c.ader_dia.toFixed(0)}%` : '-'}
                         </Text>
-                        <Text
-                          fw={800}
-                          size="lg"
-                          style={{ lineHeight: 1 }}
-                          c={cor}
-                        >
-                          {c.ader_dia == null
-                            ? '-'
-                            : `${formatNum(c.ader_dia, 1)}%`}
-                        </Text>
-                      </Stack>
                     }
                   />
+                  
+                  {/* Bloco de texto otimizado para TV */}
+                  <Stack gap={4} style={{ minWidth: 0 }}>
+                     <Text size="sm" c="dimmed" fw={700} tt="uppercase" style={{ letterSpacing: '0.5px' }}>
+                        Produzido
+                     </Text>
+                     
+                     {/* NÚMERO GIGANTE PARA LEITURA DISTANTE */}
+                     <Text fw={900} style={{ fontSize: '2.6rem', lineHeight: 1, color: '#1f2937' }}>
+                        {formatNum(c.real_dia)}h
+                     </Text>
+                     
+                     {/* Metas secundárias com fonte legível (não miúda) */}
+                     <Stack gap={2} mt={6}>
+                        <Group gap={6} align="baseline">
+                           <Text size="sm" c="dimmed" fw={600}>Esperado:</Text>
+                           <Text size="md" fw={800} c="dimmed">{formatNum(c.esperado_dia)}h</Text>
+                        </Group>
+                        <Group gap={6} align="baseline">
+                           <Text size="sm" c="dimmed" fw={600}>Meta Dia:</Text>
+                           <Text size="md" fw={800} c="dimmed">{formatNum(c.meta_dia)}h</Text>
+                        </Group>
+                     </Stack>
+                  </Stack>
+                </Group>
 
-                  <Text size="xs" c="dimmed">
-                    vs meta até agora ({formatNum(c.esperado_dia, 2)} h)
-                  </Text>
-                </Stack>
-
-                {/* base: números + barras, igual Visão do dia */}
-                <Stack gap={4}>
-                  <Text size="xs">
-                    Produzido: <b>{formatNum(c.real_dia)} h</b>
-                  </Text>
-                  <Text size="xs">
-                    Esperado até agora:{' '}
-                    <b>{formatNum(c.esperado_dia)} h</b>
-                  </Text>
-                  <Text size="xs">
-                    Meta diária: <b>{formatNum(c.meta_dia)} h</b>
-                  </Text>
-                  <Text size="xs">
-                    Desvio: <b>{formatNum(c.desvio_dia)} h</b>
-                  </Text>
-
-                  <Text size="xs" c="dimmed">
-                    vs esperado
-                  </Text>
-                  <Progress
-                    size="sm"
-                    value={clamp(pctEsperado)}
-                    color={perfColor(pctEsperado)}
-                    striped
-                  />
-
-                  <Text size="xs" c="dimmed" mt={4}>
-                    vs meta do dia
-                  </Text>
-                  <Progress
-                    size="sm"
-                    value={clamp(pctMeta)}
-                    color="var(--mantine-primary-color-filled)"
-                  />
-
-                  <Group justify="space-between" mt="xs">
-                    <Badge variant="dot">
-                      {clamp(pctEsperado).toFixed(0)}% esp.
-                    </Badge>
-                    <Badge variant="dot">
-                      {clamp(pctMeta).toFixed(0)}% meta
-                    </Badge>
-                  </Group>
+                {/* 3. Barras Inferiores grossas (size="xl") */}
+                <Stack gap="sm">
+                  <Stack gap={2}>
+                    <Group justify="space-between">
+                       <Text size="sm" fw={700} c="dimmed">Progresso vs Esperado</Text>
+                       <Text size="sm" fw={800}>{clamp(pctEsperado).toFixed(0)}%</Text>
+                    </Group>
+                    <Progress 
+                        size="xl" // Barra Grossa
+                        radius="md" 
+                        value={clamp(pctEsperado)} 
+                        color={perfColor(pctEsperado)} 
+                        striped 
+                        animated={pctEsperado < 100} 
+                    />
+                  </Stack>
+                  
+                  <Stack gap={2}>
+                    <Group justify="space-between">
+                       <Text size="sm" fw={700} c="dimmed">Progresso vs Meta</Text>
+                       <Text size="sm" fw={800}>{clamp(pctMeta).toFixed(0)}%</Text>
+                    </Group>
+                    <Progress 
+                        size="xl" // Barra Grossa
+                        radius="md" 
+                        value={clamp(pctMeta)} 
+                        color="blue" 
+                    />
+                  </Stack>
                 </Stack>
               </Stack>
             </Card>
