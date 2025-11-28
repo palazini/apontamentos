@@ -20,6 +20,8 @@ export type Centro = {
   ativo: boolean;
   desativado_desde: string | null;
   escopo: 'usinagem' | 'montagem';
+  centro_pai_id: number | null;
+  exibir_filhos: boolean;
 };
 export type Alias = {
    id: number;
@@ -147,7 +149,7 @@ export async function fetchUltimoDiaComDados(): Promise<string | null> {
 export async function fetchCentros(): Promise<Centro[]> {
   const { data, error } = await supabase
     .from('centros')
-    .select('id,codigo,ativo,desativado_desde,escopo')
+    .select('id,codigo,ativo,desativado_desde,escopo,centro_pai_id,exibir_filhos')
     .order('codigo', { ascending: true });
   if (error) throw error;
   return (data ?? []) as Centro[];
@@ -159,7 +161,8 @@ export async function createCentro(codigo: string, escopo: 'usinagem' | 'montage
     .insert({ 
         codigo: codigo.trim(), 
         ativo: true,
-        escopo: escopo
+        escopo: escopo,
+        exibir_filhos: false // Default
     })
     .select('id')
     .single();

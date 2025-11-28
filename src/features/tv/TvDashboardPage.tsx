@@ -39,7 +39,8 @@ import {
   IconClock,
   IconAlertTriangle,
   IconArrowLeft,
-  IconArrowMerge, // Ícone para indicar agrupamento
+  IconArrowMerge,
+  IconPin,
 } from '@tabler/icons-react';
 
 import {
@@ -170,7 +171,9 @@ type Contribuinte = {
 type CentroPerf = {
   centro_id: number;
   codigo: string;
-  is_parent: boolean; // Flag se é agrupador
+  is_parent: boolean;
+  has_parent: boolean;
+  pinned: boolean;
 
   meta_dia: number;
   meta_mes: number;
@@ -187,7 +190,6 @@ type CentroPerf = {
   is_stale: boolean;     
   last_ref_time: string;
 
-  // Lista de filhos que compuseram este total
   contribuintes: Contribuinte[];
 };
 
@@ -343,16 +345,16 @@ export default function TvDashboardPage() {
       const diasCorridosMes = countDaysExcludingSundays(startMes, diaRefLocal);
       const startSerie = addDays(diaRefLocal, -13); 
 
-      // 1. BUSCAR CENTROS + HIERARQUIA MANUALMENTE
+      // 1. BUSCAR CENTROS
       const { data: centrosRaw } = await supabase
         .from('centros')
-        .select('id, codigo, ativo, desativado_desde, escopo, centro_pai_id')
+        .select('id, codigo, ativo, desativado_desde, escopo, centro_pai_id, exibir_filhos')
         .order('codigo');
       
       const centrosAll = centrosRaw ?? [];
       const metasAtuaisAll = await fetchMetasAtuais();
 
-      // 2. FILTRAGEM DE ESCOPO E HIERARQUIA
+      // 2. FILTRAGEM E HIERARQUIA
       const centrosMap = new Map<number, typeof centrosAll[0]>();
       centrosAll.forEach(c => centrosMap.set(c.id, c));
 
@@ -369,15 +371,28 @@ export default function TvDashboardPage() {
          
          if (isCentroAtivoNoDia(c, diaRefLocal)) {
              if (pai) {
-                 if (belongsToScope || (pai.escopo === scope)) {
+                 // É filho. 
+                 const parentInScope = !scope || scope === 'geral' || pai.escopo === scope;
+                 
+                 if (belongsToScope || parentInScope) {
                      idsParaBuscarDados.add(c.id);
-                     idsCards.add(pai.id);
                      
+                     // Pai vira card (se estiver no escopo)
+                     if (parentInScope) {
+                        idsCards.add(pai.id);
+                     }
+
                      const list = parentToChildren.get(pai.id) ?? [];
                      list.push(c.id);
                      parentToChildren.set(pai.id, list);
+
+                     // Se Pai manda exibir e Filho está no contexto, Filho vira card
+                     if (pai.exibir_filhos && parentInScope) {
+                         idsCards.add(c.id);
+                     }
                  }
              } else {
+                 // É standalone ou é um Pai
                  if (belongsToScope) {
                      idsParaBuscarDados.add(c.id);
                      idsCards.add(c.id);
@@ -386,7 +401,7 @@ export default function TvDashboardPage() {
          }
       });
 
-      // Busca dados de produção
+      // Busca dados
       let fullHistory: any[] = [];
       if (idsParaBuscarDados.size > 0) {
           fullHistory = await fetchCentroSeriesRange(
@@ -396,12 +411,12 @@ export default function TvDashboardPage() {
           );
       }
 
-      // --- 4. CALCULAR PERFORMANCE DOS CARDS (AGRUPADO) ---
+      // --- 4. CALCULAR PERFORMANCE ---
       const perfCalculada: CentroPerf[] = [];
       const cardIdsArr = Array.from(idsCards);
 
       const metasMap = new Map<number, number>();
-      (metasAtuaisAll as VMetaAtual[]).forEach(m => metasMap.set(m.centro_id, Number(m.meta_horas)));
+      (metasAtuaisAll as any[]).forEach(m => metasMap.set(m.centro_id, Number(m.meta_horas)));
 
       const historyAgregadoGlobal = new Map<string, number>(); 
 
@@ -410,6 +425,11 @@ export default function TvDashboardPage() {
           if (!centroCard) return;
 
           const isParent = parentToChildren.has(cardId);
+          const hasParent = !!centroCard.centro_pai_id;
+          
+          // Fixação: Só fixa se for pai, tiver a flag E estiver no escopo específico
+          const isPinned = !!centroCard.exibir_filhos && isParent && (scope === centroCard.escopo);
+
           const childrenIds = parentToChildren.get(cardId) ?? [cardId];
 
           const metaDia = metasMap.get(cardId) ?? 0;
@@ -417,10 +437,8 @@ export default function TvDashboardPage() {
 
           let realDia = 0;
           let realMes = 0;
-          
           let maxRefTimeMs = 0;
           let lastRefStr = horaRefGlobal;
-          
           const contribuintesList: Contribuinte[] = [];
 
           childrenIds.forEach(childId => {
@@ -430,16 +448,12 @@ export default function TvDashboardPage() {
               let childIsStale = false;
 
               const hist = fullHistory.filter(h => h.centro_id === childId);
-              
               hist.forEach(h => {
                   const val = Number(h.produzido_h) || 0;
-                  if (h.data_wip >= toISO(startMes) && h.data_wip <= toISO(diaRefLocal)) {
-                      realMes += val;
-                  }
+                  if (h.data_wip >= toISO(startMes) && h.data_wip <= toISO(diaRefLocal)) realMes += val;
                   if (h.data_wip === toISO(diaRefLocal)) {
                       realDia += val;
                       childRealDia += val;
-                      
                       if (h.data_referencia) {
                           const refDate = new Date(h.data_referencia);
                           if (refDate.getTime() > maxRefTimeMs) {
@@ -447,27 +461,22 @@ export default function TvDashboardPage() {
                               lastRefStr = extractTime(refDate);
                           }
                           childLastRef = extractTime(refDate);
-                          
                           if (!isFuture && !isPast) {
                               const diff = dataRefGlobalObj.getTime() - refDate.getTime();
                               if (diff > 2 * 60 * 1000) childIsStale = true;
                           }
                       }
                   }
-                  
                   if (h.data_wip >= toISO(startSerie)) {
-                      const prev = historyAgregadoGlobal.get(h.data_wip) ?? 0;
-                      historyAgregadoGlobal.set(h.data_wip, prev + val);
+                      if (isParent || !centroCard.centro_pai_id) {
+                          const prev = historyAgregadoGlobal.get(h.data_wip) ?? 0;
+                          historyAgregadoGlobal.set(h.data_wip, prev + val);
+                      }
                   }
               });
 
               if (isParent) {
-                  contribuintesList.push({
-                      codigo: childCode,
-                      real: childRealDia,
-                      is_stale: childIsStale,
-                      last_ref: childLastRef
-                  });
+                  contribuintesList.push({ codigo: childCode, real: childRealDia, is_stale: childIsStale, last_ref: childLastRef });
               }
           });
 
@@ -483,12 +492,9 @@ export default function TvDashboardPage() {
           }
 
           let fracAplicada = fracGlobal;
-          if (!isParent && cardIsStale) {
-              fracAplicada = fracDiaLogico(lastRefStr);
-          }
+          if (!isParent && cardIsStale) fracAplicada = fracDiaLogico(lastRefStr);
           
           const esperado = +(metaDia * fracAplicada).toFixed(2);
-          
           let aderDia: number | null = null;
           if (!isFuture) {
             if (esperado > 0) aderDia = (realDia / esperado) * 100;
@@ -503,6 +509,8 @@ export default function TvDashboardPage() {
               centro_id: cardId,
               codigo: centroCard.codigo,
               is_parent: isParent,
+              has_parent: hasParent, 
+              pinned: isPinned,
               meta_dia: +metaDia.toFixed(2),
               meta_mes: +metaMes.toFixed(2),
               real_dia: +realDia.toFixed(2),
@@ -518,8 +526,10 @@ export default function TvDashboardPage() {
           });
       });
 
-      // 5. Montar Gráfico Global
-      const metaTotalCards = perfCalculada.reduce((acc, c) => acc + c.meta_dia, 0);
+      // Gráfico Global
+      const metaTotalCards = perfCalculada
+          .filter(c => c.is_parent || !c.has_parent)
+          .reduce((acc, c) => acc + c.meta_dia, 0);
       
       const dias = daysBetween(startSerie, diaRefLocal);
       const serieFactory: FactoryDayRow[] = [];
@@ -527,15 +537,7 @@ export default function TvDashboardPage() {
         if (isSundayISO(iso)) continue; 
         const prod = +(historyAgregadoGlobal.get(iso) ?? 0).toFixed(2);
         const pct = metaTotalCards > 0 ? (prod / metaTotalCards) * 100 : 100;
-        
-        serieFactory.push({
-          iso,
-          label: shortBR(iso),
-          produzido: prod,
-          meta: metaTotalCards,
-          pct,
-          isSaturday: isSaturdayISO(iso),
-        });
+        serieFactory.push({ iso, label: shortBR(iso), produzido: prod, meta: metaTotalCards, pct, isSaturday: isSaturdayISO(iso) });
       }
 
       if (!cancelledRef.current) {
@@ -556,9 +558,7 @@ export default function TvDashboardPage() {
   }, [loadData]);
 
   useEffect(() => {
-    const channel = supabase.channel('tv-uploads-kiosk')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'upload_dia_ativo' }, () => { loadData(); })
-      .subscribe();
+    const channel = supabase.channel('tv-uploads-kiosk').on('postgres_changes', { event: '*', schema: 'public', table: 'upload_dia_ativo' }, () => { loadData(); }).subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [loadData]);
 
@@ -567,34 +567,52 @@ export default function TvDashboardPage() {
     return () => window.clearInterval(id);
   }, [loadData]);
 
-  // Atualiza KPIs do topo
   const resumo = useMemo(() => {
     if (!centrosPerf.length) return { metaMes: 0, realMes: 0, aderMes: null, metaDia: 0, realDia: 0, esperadoDia: 0, aderDia: null };
     
-    const metaMes = centrosPerf.reduce((s, c) => s + c.meta_mes, 0);
-    const realMes = centrosPerf.reduce((s, c) => s + c.real_mes, 0);
-    const metaDia = centrosPerf.reduce((s, c) => s + c.meta_dia, 0);
-    const realDia = centrosPerf.reduce((s, c) => s + c.real_dia, 0);
-    const esperadoDia = centrosPerf.reduce((s, c) => s + c.esperado_dia, 0);
-
-    const aderMes = metaMes > 0 ? (realMes / metaMes) * 100 : null;
-    let aderDia: number | null = null;
-    if (!contextDia.isFuture) {
-      if (esperadoDia > 0) aderDia = (realDia / esperadoDia) * 100;
-      else if (contextDia.isPast && metaDia > 0) aderDia = (realDia / metaDia) * 100;
-      else aderDia = 0;
-    }
-    return { metaMes, realMes, aderMes, metaDia, realDia, esperadoDia, aderDia };
+    // Soma apenas os "Líderes" (Pais ou sem pai) para não duplicar
+    const lideres = centrosPerf.filter(c => c.is_parent || !c.has_parent);
+    
+    return lideres.reduce((acc, c) => {
+        acc.metaMes += c.meta_mes;
+        acc.realMes += c.real_mes;
+        acc.metaDia += c.meta_dia;
+        acc.realDia += c.real_dia;
+        acc.esperadoDia += c.esperado_dia;
+        return acc;
+    }, { metaMes: 0, realMes: 0, aderMes: null, metaDia: 0, realDia: 0, esperadoDia: 0, aderDia: null });
   }, [centrosPerf, contextDia]);
 
-  // Ordenação e Paginação (6 itens por padrão: 3 cols x 2 linhas)
-  const centrosOrdenados = useMemo(() => [...centrosPerf].sort((a, b) => (b.ader_dia ?? -Infinity) - (a.ader_dia ?? -Infinity)), [centrosPerf]);
-  const itensPorPagina = 6; 
-  const centroPages = useMemo(() => chunk(centrosOrdenados, itensPorPagina), [centrosOrdenados, itensPorPagina]);
-  const totalSlides = 1 + Math.max(centroPages.length, 1);
+  // ORDENAÇÃO E PAGINAÇÃO INTELIGENTE (PINNED)
+  const centroPages = useMemo(() => {
+      const pinnedItems = centrosPerf.filter(c => c.pinned);
+      const regularItems = centrosPerf.filter(c => !c.pinned).sort((a, b) => (b.ader_dia ?? -Infinity) - (a.ader_dia ?? -Infinity));
+
+      const slotsPerPage = 6; 
+      const availableSlots = Math.max(1, slotsPerPage - pinnedItems.length);
+
+      const regularChunks = chunk(regularItems, availableSlots);
+
+      if (regularChunks.length === 0 && pinnedItems.length > 0) {
+          return [pinnedItems];
+      }
+
+      if (regularChunks.length === 0 && pinnedItems.length === 0) {
+          return [];
+      }
+
+      return regularChunks.map(c => [...pinnedItems, ...c]);
+  }, [centrosPerf]);
+
+  // CORREÇÃO PAGINAÇÃO: Garante slide 0 + slides de conteúdo
+  const totalSlides = 1 + Math.max(centroPages.length, 0); 
 
   useEffect(() => {
-    if (!totalSlides) return;
+      setActiveSlide(0);
+  }, [scope, centroPages.length]);
+
+  useEffect(() => {
+    if (totalSlides <= 1) return;
     const id = window.setInterval(() => { setActiveSlide((prev) => (prev + 1) % totalSlides); }, 15000);
     return () => window.clearInterval(id);
   }, [totalSlides]);
@@ -606,21 +624,18 @@ export default function TvDashboardPage() {
   return (
     <div ref={rootRef} style={{ width: '100vw', height: '100vh', background: '#f5f5f7', padding: '16px 24px', boxSizing: 'border-box' }}>
       <Stack h="100%" gap="sm">
-        {/* Cabeçalho */}
         <Group justify="space-between" align="center">
           <Group gap="sm" align="center">
              <Button variant="subtle" color="gray" size="md" leftSection={<IconArrowLeft size={20} />} onClick={() => navigate('/tv')} styles={{ root: { paddingLeft: 0, paddingRight: 10 } }}>Menu</Button>
             <ThemeIcon size="lg" radius="md" color="blue" variant="light"><IconTrendingUp size={20} /></ThemeIcon>
             <Title order={2}>{tituloPainel}</Title>
           </Group>
-
           <Group gap="lg" align="center">
-            {/* KPI CHIPS */}
             <Card padding="xs" radius="md" withBorder shadow="xs" bg="white">
-               <Group gap="xs"><Text size="xs" fw={700} c="dimmed">MÊS</Text><Badge variant="light" color="gray" size="lg">Meta: {formatNum(resumo.metaMes)}h</Badge><Badge variant="filled" color="blue" size="lg">Real: {formatNum(resumo.realMes)}h</Badge><Badge variant="filled" color={perfColor(resumo.aderMes)} size="lg">{resumo.aderMes == null ? '-' : `${formatNum(resumo.aderMes, 1)}%`}</Badge></Group>
+               <Group gap="xs"><Text size="xs" fw={700} c="dimmed">MÊS</Text><Badge variant="light" color="gray" size="lg">Meta: {formatNum(resumo.metaMes)}h</Badge><Badge variant="filled" color="blue" size="lg">Real: {formatNum(resumo.realMes)}h</Badge><Badge variant="filled" color={perfColor(resumo.metaMes > 0 ? (resumo.realMes/resumo.metaMes)*100 : 0)} size="lg">{resumo.metaMes > 0 ? `${formatNum((resumo.realMes/resumo.metaMes)*100, 1)}%` : '-'}</Badge></Group>
             </Card>
             <Card padding="xs" radius="md" withBorder shadow="xs" bg="white">
-               <Group gap="xs"><Text size="xs" fw={700} c="dimmed">DIA</Text><Badge variant="light" color="gray" size="lg">Meta: {formatNum(resumo.metaDia)}h</Badge><Badge variant="outline" color="blue" size="lg">Real: {formatNum(resumo.realDia)}h</Badge><Badge variant="outline" color={perfColor(resumo.aderDia)} size="lg">{resumo.aderDia == null ? '-' : `${formatNum(resumo.aderDia, 1)}%`}</Badge></Group>
+               <Group gap="xs"><Text size="xs" fw={700} c="dimmed">DIA</Text><Badge variant="light" color="gray" size="lg">Meta: {formatNum(resumo.metaDia)}h</Badge><Badge variant="outline" color="blue" size="lg">Real: {formatNum(resumo.realDia)}h</Badge><Badge variant="outline" color={perfColor(resumo.esperadoDia > 0 ? (resumo.realDia/resumo.esperadoDia)*100 : 0)} size="lg">{resumo.esperadoDia > 0 ? `${formatNum((resumo.realDia/resumo.esperadoDia)*100, 1)}%` : '-'}</Badge></Group>
             </Card>
             <Card padding="sm" radius="md" withBorder shadow="sm" bg="gray.1">
                 <Group gap="sm"><ThemeIcon size="lg" radius="xl" color="teal" variant="filled"><IconClock size={20} /></ThemeIcon><Stack gap={0}><Text size="xs" c="dimmed" fw={700} tt="uppercase">Atualizado em</Text><Text size="lg" fw={900} c="dark">{lastUpdateText}</Text></Stack></Group>
@@ -629,32 +644,24 @@ export default function TvDashboardPage() {
           </Group>
         </Group>
 
-        {/* Área Principal */}
         <Card withBorder shadow="sm" radius="lg" padding="lg" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
           {loading ? (
             <Group justify="center" align="center" style={{ height: '100%' }}><Loader size="xl" /></Group>
           ) : (
             <>
-              {/* Paginação */}
               <Group justify="space-between" mb="xs" align="center">
                 <Group gap="xs" align="center">
                    <ActionIcon variant="light" radius="xl" onClick={goPrev} size="lg"><IconChevronLeft size={18} /></ActionIcon>
                    <Group gap={6}>{Array.from({ length: totalSlides }).map((_, idx) => (<ActionIcon key={idx} radius="xl" size="sm" variant={idx === activeSlide ? 'filled' : 'light'} color={idx === activeSlide ? 'blue' : 'gray'} onClick={() => setActiveSlide(idx)} />))}</Group>
                    <ActionIcon variant="light" radius="xl" onClick={goNext} size="lg"><IconChevronRight size={18} /></ActionIcon>
                 </Group>
-                <Text fw={600} c="dimmed" size="sm">{activeSlide === 0 ? "Visão Geral" : `Máquinas - Pág ${activeSlide} de ${centroPages.length}`}</Text>
+                <Text fw={600} c="dimmed" size="sm">
+                    {activeSlide === 0 ? "Visão Geral" : `Máquinas - Pág ${activeSlide} de ${centroPages.length}`}
+                </Text>
               </Group>
 
-              {/* Slide Content */}
               <div style={{ flex: 1, minHeight: 0 }}>
-                {activeSlide === 0 ? (
-                  <SlideFactory dias={factoryDays} />
-                ) : (
-                  <SlideMaquinas 
-                    page={centroPages[activeSlide - 1] ?? []} 
-                    isFuture={contextDia.isFuture} 
-                  />
-                )}
+                {activeSlide === 0 ? <SlideFactory dias={factoryDays} /> : <SlideMaquinas page={centroPages[activeSlide - 1] ?? []} isFuture={contextDia.isFuture} />}
               </div>
             </>
           )}
@@ -705,6 +712,7 @@ function SlideMaquinas({ page, isFuture }: { page: CentroPerf[]; isFuture: boole
                       <Group gap={4}>
                           <Text fw={900} size="xl" style={{ fontSize: '1.6rem' }}>{c.codigo}</Text>
                           {c.is_parent && <IconArrowMerge size={22} color="gray" style={{ opacity: 0.5 }} />}
+                          {c.pinned && <IconPin size={22} color="gray" style={{ opacity: 0.5, transform: 'rotate(45deg)' }} />}
                       </Group>
                       {c.is_stale && <Badge variant="filled" color="orange" size="sm" leftSection={<IconAlertTriangle size={12} />}>Dados de {c.last_ref_time}</Badge>}
                   </Stack>
@@ -723,7 +731,6 @@ function SlideMaquinas({ page, isFuture }: { page: CentroPerf[]; isFuture: boole
                   </Stack>
                 </Group>
 
-                {/* Lista de Contribuição para Agrupadores */}
                 {c.is_parent && (
                     <>
                     <Divider my={4} />
@@ -747,7 +754,7 @@ function SlideMaquinas({ page, isFuture }: { page: CentroPerf[]; isFuture: boole
                 )}
 
                 <Stack gap="sm" mt={c.is_parent ? 'auto' : 0}>
-                  <Stack gap={2}><Group justify="space-between"><Text size="sm" fw={700} c="dimmed">Progresso vs Esperado</Text><Text size="sm" fw={800}>{clamp(pctEsperado).toFixed(0)}%</Text></Group><Progress size="xl" radius="md" value={clamp(pctEsperado)} color={perfColor(pctEsperado)} striped animated={pctEsperado < 100} /></Stack>
+                  <Stack gap={2}><Group justify="space-between"><Text size="sm" fw={700} c="dimmed">Progresso vs Esperado</Text><Text size="sm" fw={800}>{clamp(c.esperado_dia > 0 ? (c.real_dia/c.esperado_dia)*100 : 0).toFixed(0)}%</Text></Group><Progress size="xl" radius="md" value={clamp(c.esperado_dia > 0 ? (c.real_dia/c.esperado_dia)*100 : 0)} color={perfColor(c.esperado_dia > 0 ? (c.real_dia/c.esperado_dia)*100 : 0)} striped animated={c.real_dia < c.esperado_dia} /></Stack>
                   <Stack gap={2}><Group justify="space-between"><Text size="sm" fw={700} c="dimmed">Progresso vs Meta</Text><Text size="sm" fw={800}>{clamp(c.pct_meta_dia ?? 0).toFixed(0)}%</Text></Group><Progress size="xl" radius="md" value={clamp(c.pct_meta_dia ?? 0)} color="blue" /></Stack>
                 </Stack>
               </Stack>
