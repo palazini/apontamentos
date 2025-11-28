@@ -15,6 +15,8 @@ import {
   RingProgress,
   ThemeIcon,
   Button,
+  ScrollArea,
+  Divider,
 } from '@mantine/core';
 import {
   ResponsiveContainer,
@@ -37,22 +39,30 @@ import {
   IconClock,
   IconAlertTriangle,
   IconArrowLeft,
-  IconUsersGroup, // Ícone para o card de equipe/agregado
+  IconArrowMerge, // Ícone para indicar agrupamento
 } from '@tabler/icons-react';
 
-// Importações locais
 import {
   fetchMetasAtuais,
   fetchCentroSeriesRange,
   fetchUltimoDiaComDados,
   fetchUploadsPorDia,
-  fetchCentrosSmart,
   type VMetaAtual,
   type VUploadDia,
   type CentroSmart,
 } from '../../services/db';
 import { supabase } from '../../lib/supabaseClient';
 import { fracDiaLogico } from '../../utils/time';
+
+/* ========= Debug Time Helper ========= */
+function getNow() {
+  const debugDate = localStorage.getItem('TV_DEBUG_DATE'); 
+  if (debugDate) {
+    const d = new Date(debugDate);
+    if (!Number.isNaN(d.getTime())) return d;
+  }
+  return new Date();
+}
 
 /* ========= helpers de data ========= */
 function startOfDayLocal(d: Date) {
@@ -122,9 +132,8 @@ function parseLocalDateString(input: string | null | undefined): Date | null {
   return null;
 }
 
-function isCentroAtivoNoDia(c: CentroSmart, dataWip: Date): boolean {
+function isCentroAtivoNoDia(c: any, dataWip: Date): boolean {
   if (c.ativo === false) return false;
-
   if (c.desativado_desde) {
     const d = parseLocalDateString(c.desativado_desde);
     if (d && !Number.isNaN(d.getTime())) {
@@ -152,20 +161,35 @@ type FactoryDayRow = {
   isSaturday: boolean;
 };
 
+type Contribuinte = {
+  codigo: string;
+  real: number;
+  is_stale: boolean;
+  last_ref: string;
+};
+
 type CentroPerf = {
   centro_id: number;
   codigo: string;
+  is_parent: boolean; // Flag se é agrupador
+
   meta_dia: number;
   meta_mes: number;
+
   real_dia: number;
   real_mes: number;
+
   esperado_dia: number;
   desvio_dia: number;
   ader_dia: number | null; 
   pct_meta_dia: number | null; 
   ader_mes: number | null;
+  
   is_stale: boolean;     
-  last_ref_time: string; 
+  last_ref_time: string;
+
+  // Lista de filhos que compuseram este total
+  contribuintes: Contribuinte[];
 };
 
 /* ========= helpers gerais ========= */
@@ -225,7 +249,7 @@ function FactoryBarLabel(props: any) {
 /* ========= componente principal ========= */
 export default function TvDashboardPage() {
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const { scope } = useParams(); // 'geral', 'usinagem', 'montagem'
+  const { scope } = useParams(); 
   const navigate = useNavigate();
 
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -244,7 +268,6 @@ export default function TvDashboardPage() {
   const [activeSlide, setActiveSlide] = useState(0);
   const cancelledRef = useRef(false);
 
-  // Título Dinâmico
   const tituloPainel = useMemo(() => {
     if (scope === 'montagem') return 'Painel de Montagem';
     if (scope === 'usinagem') return 'Painel de Usinagem';
@@ -292,11 +315,13 @@ export default function TvDashboardPage() {
         null;
 
       let horaRefGlobal = '00:00';
-      let dataRefGlobalObj = new Date();
+      let dataRefGlobalObj = getNow();
 
       if (ativo) {
         const dt = new Date(ativo.enviado_em);
-        dataRefGlobalObj = dt;
+        if (!localStorage.getItem('TV_DEBUG_DATE')) {
+             dataRefGlobalObj = dt;
+        }
         const dataStr = dt.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
         const horaStr = dt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
         horaRefGlobal = horaStr;
@@ -305,7 +330,7 @@ export default function TvDashboardPage() {
         setLastUpdateText('Sem dados');
       }
 
-      const todayLocal = startOfDayLocal(new Date());
+      const todayLocal = startOfDayLocal(getNow());
       const isPast = diaRefLocal < todayLocal;
       const isToday = diaRefLocal.getTime() === todayLocal.getTime();
       const isFuture = !isPast && !isToday;
@@ -319,126 +344,152 @@ export default function TvDashboardPage() {
       const diasCorridosMes = countDaysExcludingSundays(startMes, diaRefLocal);
       const startSerie = addDays(diaRefLocal, -13); 
 
-      // 1. Buscar Centros e Metas PRIMEIRO
-      const [centrosSmart, metasAtuaisAll] = await Promise.all([
-        fetchCentrosSmart(),
-        fetchMetasAtuais(),
-      ]);
-
-      // 2. Determinar Escopo e filtrar IDs
-      const scopeIds: number[] = [];
-      const ativosSet = new Set<number>();
+      // 1. BUSCAR CENTROS + HIERARQUIA MANUALMENTE
+      const { data: centrosRaw } = await supabase
+        .from('centros')
+        .select('id, codigo, ativo, desativado_desde, escopo, centro_pai_id')
+        .order('codigo');
       
-      (centrosSmart as CentroSmart[]).forEach((c) => {
-        // Lógica de filtro:
-        const matchesScope = !scope || scope === 'geral' || (c.escopo === scope);
-        if (matchesScope) {
-            scopeIds.push(c.id);
-            if (isCentroAtivoNoDia(c, diaRefLocal)) {
-                ativosSet.add(c.id);
-            }
-        }
+      const centrosAll = centrosRaw ?? [];
+      const metasAtuaisAll = await fetchMetasAtuais();
+
+      // 2. FILTRAGEM DE ESCOPO E HIERARQUIA
+      const centrosMap = new Map<number, typeof centrosAll[0]>();
+      centrosAll.forEach(c => centrosMap.set(c.id, c));
+
+      const idsParaBuscarDados = new Set<number>();
+      const idsCards = new Set<number>();
+      const parentToChildren = new Map<number, number[]>();
+
+      centrosAll.forEach((c) => {
+         let belongsToScope = false;
+         if (!scope || scope === 'geral') belongsToScope = true;
+         else if (c.escopo === scope) belongsToScope = true;
+         
+         const pai = c.centro_pai_id ? centrosMap.get(c.centro_pai_id) : null;
+         
+         if (isCentroAtivoNoDia(c, diaRefLocal)) {
+             if (pai) {
+                 if (belongsToScope || (pai.escopo === scope)) {
+                     idsParaBuscarDados.add(c.id);
+                     idsCards.add(pai.id);
+                     
+                     const list = parentToChildren.get(pai.id) ?? [];
+                     list.push(c.id);
+                     parentToChildren.set(pai.id, list);
+                 }
+             } else {
+                 if (belongsToScope) {
+                     idsParaBuscarDados.add(c.id);
+                     idsCards.add(c.id);
+                 }
+             }
+         }
       });
 
-      // 3. Buscar Histórico COMPLETO apenas para o escopo selecionado
-      const minDate = startMes < startSerie ? startMes : startSerie;
-      
+      // Busca dados de produção
       let fullHistory: any[] = [];
-      if (scopeIds.length > 0) {
+      if (idsParaBuscarDados.size > 0) {
           fullHistory = await fetchCentroSeriesRange(
-              scopeIds, 
-              toISO(minDate), 
+              Array.from(idsParaBuscarDados), 
+              toISO(startSerie < startMes ? startSerie : startMes), 
               toISO(diaRefLocal)
           );
       }
 
-      // 4. Calcular Meta Total Filtrada (para o gráfico e KPIs)
-      const metasAtuais = (metasAtuaisAll as VMetaAtual[]).filter((m) => ativosSet.has(m.centro_id));
-      const metaDiaTotalFiltrada = metasAtuais.reduce((acc, curr) => acc + Number(curr.meta_horas), 0);
+      // --- 4. CALCULAR PERFORMANCE DOS CARDS (AGRUPADO) ---
+      const perfCalculada: CentroPerf[] = [];
+      const cardIdsArr = Array.from(idsCards);
 
-      // 5. Montar Série do Gráfico (Agregando os dados filtrados MANUALMENTE)
-      const fabMap = new Map<string, number>();
-      
-      fullHistory.forEach((r) => {
-          if (r.data_wip >= toISO(startSerie)) {
-             const current = fabMap.get(r.data_wip) ?? 0;
-             fabMap.set(r.data_wip, current + Number(r.produzido_h));
-          }
-      });
+      const metasMap = new Map<number, number>();
+      (metasAtuaisAll as VMetaAtual[]).forEach(m => metasMap.set(m.centro_id, Number(m.meta_horas)));
 
-      const dias = daysBetween(startSerie, diaRefLocal);
-      const serieFactory: FactoryDayRow[] = [];
-      for (const iso of dias) {
-        if (isSundayISO(iso)) continue; 
-        const prod = +(fabMap.get(iso) ?? 0).toFixed(2);
-        const pct = metaDiaTotalFiltrada > 0 ? (prod / metaDiaTotalFiltrada) * 100 : 100;
-        
-        serieFactory.push({
-          iso,
-          label: shortBR(iso),
-          produzido: prod,
-          meta: metaDiaTotalFiltrada, // Meta filtrada do dia atual (aproximação para histórico)
-          pct,
-          isSaturday: isSaturdayISO(iso),
-        });
-      }
+      const historyAgregadoGlobal = new Map<string, number>(); 
 
-      // 6. Preparar dados dos Cards das Máquinas
-      const metasByCentro = new Map<number, { metaDia: number; codigo: string }>();
-      metasAtuais.forEach((m) => {
-        metasByCentro.set(m.centro_id, {
-          metaDia: Number(m.meta_horas) || 0,
-          codigo: m.centro,
-        });
-      });
+      cardIdsArr.forEach(cardId => {
+          const centroCard = centrosMap.get(cardId);
+          if (!centroCard) return;
 
-      const centroIds = metasAtuais.map((m) => m.centro_id);
-      let centrosPerfCalc: CentroPerf[] = [];
+          const isParent = parentToChildren.has(cardId);
+          const childrenIds = parentToChildren.get(cardId) ?? [cardId];
 
-      if (centroIds.length) {
-        const prodMesByCentro = new Map<number, number>();
-        const prodDiaByCentro = new Map<number, number>();
-        const refDiaByCentro = new Map<number, string>();
-
-        fullHistory.forEach((r) => {
-          if (isSundayISO(r.data_wip)) return;
-          const cid = r.centro_id as number;
-          if (r.data_wip >= toISO(startMes)) {
-             const val = Number(r.produzido_h) || 0;
-             prodMesByCentro.set(cid, (prodMesByCentro.get(cid) ?? 0) + val);
-          }
-
-          if (r.data_wip === lastDayIso) {
-            const val = Number(r.produzido_h) || 0;
-            prodDiaByCentro.set(cid, (prodDiaByCentro.get(cid) ?? 0) + val);
-            if (r.data_referencia) refDiaByCentro.set(cid, r.data_referencia);
-          }
-        });
-
-        centrosPerfCalc = centroIds.map((cid) => {
-          const metaInfo = metasByCentro.get(cid);
-          const metaDia = metaInfo?.metaDia ?? 0;
-          const codigo = metaInfo?.codigo ?? `#${cid}`;
+          const metaDia = metasMap.get(cardId) ?? 0;
           const metaMes = metaDia * diasCorridosMes;
-          const realMes = prodMesByCentro.get(cid) ?? 0;
-          const realDia = prodDiaByCentro.get(cid) ?? 0;
 
-          // Stale Logic
-          const dataRefLocalStr = refDiaByCentro.get(cid);
-          let fracIndividual = fracGlobal;
-          let isStale = false;
-          let lastRefTime = horaRefGlobal;
+          let realDia = 0;
+          let realMes = 0;
+          
+          let maxRefTimeMs = 0;
+          let lastRefStr = horaRefGlobal;
+          
+          const contribuintesList: Contribuinte[] = [];
 
-          if (dataRefLocalStr && !isFuture && !isPast) {
-             const refDate = new Date(dataRefLocalStr);
-             const refTimeStr = extractTime(refDate);
-             lastRefTime = refTimeStr;
-             fracIndividual = fracDiaLogico(refTimeStr);
-             const diffMs = dataRefGlobalObj.getTime() - refDate.getTime();
-             if (diffMs > 2 * 60 * 1000) isStale = true;
+          childrenIds.forEach(childId => {
+              const childCode = centrosMap.get(childId)?.codigo ?? '?';
+              let childRealDia = 0;
+              let childLastRef = horaRefGlobal;
+              let childIsStale = false;
+
+              const hist = fullHistory.filter(h => h.centro_id === childId);
+              
+              hist.forEach(h => {
+                  const val = Number(h.produzido_h) || 0;
+                  if (h.data_wip >= toISO(startMes) && h.data_wip <= toISO(diaRefLocal)) {
+                      realMes += val;
+                  }
+                  if (h.data_wip === toISO(diaRefLocal)) {
+                      realDia += val;
+                      childRealDia += val;
+                      
+                      if (h.data_referencia) {
+                          const refDate = new Date(h.data_referencia);
+                          if (refDate.getTime() > maxRefTimeMs) {
+                              maxRefTimeMs = refDate.getTime();
+                              lastRefStr = extractTime(refDate);
+                          }
+                          childLastRef = extractTime(refDate);
+                          
+                          if (!isFuture && !isPast) {
+                              const diff = dataRefGlobalObj.getTime() - refDate.getTime();
+                              if (diff > 2 * 60 * 1000) childIsStale = true;
+                          }
+                      }
+                  }
+                  
+                  if (h.data_wip >= toISO(startSerie)) {
+                      const prev = historyAgregadoGlobal.get(h.data_wip) ?? 0;
+                      historyAgregadoGlobal.set(h.data_wip, prev + val);
+                  }
+              });
+
+              if (isParent) {
+                  contribuintesList.push({
+                      codigo: childCode,
+                      real: childRealDia,
+                      is_stale: childIsStale,
+                      last_ref: childLastRef
+                  });
+              }
+          });
+
+          let cardIsStale = false;
+          if (!isParent && !isFuture && !isPast) {
+             const histHoje = fullHistory.find(h => h.centro_id === cardId && h.data_wip === toISO(diaRefLocal));
+             if (histHoje?.data_referencia) {
+                 const refDate = new Date(histHoje.data_referencia);
+                 const diff = dataRefGlobalObj.getTime() - refDate.getTime();
+                 if (diff > 2 * 60 * 1000) cardIsStale = true;
+                 lastRefStr = extractTime(refDate);
+             }
           }
 
-          const esperado = +(metaDia * fracIndividual).toFixed(2);
+          let fracAplicada = fracGlobal;
+          if (!isParent && cardIsStale) {
+              fracAplicada = fracDiaLogico(lastRefStr);
+          }
+          
+          const esperado = +(metaDia * fracAplicada).toFixed(2);
+          
           let aderDia: number | null = null;
           if (!isFuture) {
             if (esperado > 0) aderDia = (realDia / esperado) * 100;
@@ -449,26 +500,48 @@ export default function TvDashboardPage() {
           const aderMes = metaMes > 0 ? (realMes / metaMes) * 100 : null;
           const pctMetaDia = metaDia > 0 ? (realDia / metaDia) * 100 : null;
 
-          return {
-            centro_id: cid, codigo,
-            meta_dia: +metaDia.toFixed(2),
-            meta_mes: +metaMes.toFixed(2),
-            real_dia: +realDia.toFixed(2),
-            real_mes: +realMes.toFixed(2),
-            esperado_dia: esperado,
-            desvio_dia: +(realDia - esperado).toFixed(2),
-            ader_dia: aderDia !== null ? +aderDia.toFixed(2) : null,
-            pct_meta_dia: pctMetaDia !== null ? +pctMetaDia.toFixed(2) : null,
-            ader_mes: aderMes !== null ? +aderMes.toFixed(2) : null,
-            is_stale: isStale,
-            last_ref_time: lastRefTime,
-          };
+          perfCalculada.push({
+              centro_id: cardId,
+              codigo: centroCard.codigo,
+              is_parent: isParent,
+              meta_dia: +metaDia.toFixed(2),
+              meta_mes: +metaMes.toFixed(2),
+              real_dia: +realDia.toFixed(2),
+              real_mes: +realMes.toFixed(2),
+              esperado_dia: esperado,
+              desvio_dia: +(realDia - esperado).toFixed(2),
+              ader_dia: aderDia !== null ? +aderDia.toFixed(2) : null,
+              pct_meta_dia: pctMetaDia !== null ? +pctMetaDia.toFixed(2) : null,
+              ader_mes: aderMes !== null ? +aderMes.toFixed(2) : null,
+              is_stale: cardIsStale,
+              last_ref_time: lastRefStr,
+              contribuintes: contribuintesList.sort((a,b) => b.real - a.real),
+          });
+      });
+
+      // 5. Montar Gráfico Global
+      const metaTotalCards = perfCalculada.reduce((acc, c) => acc + c.meta_dia, 0);
+      
+      const dias = daysBetween(startSerie, diaRefLocal);
+      const serieFactory: FactoryDayRow[] = [];
+      for (const iso of dias) {
+        if (isSundayISO(iso)) continue; 
+        const prod = +(historyAgregadoGlobal.get(iso) ?? 0).toFixed(2);
+        const pct = metaTotalCards > 0 ? (prod / metaTotalCards) * 100 : 100;
+        
+        serieFactory.push({
+          iso,
+          label: shortBR(iso),
+          produzido: prod,
+          meta: metaTotalCards,
+          pct,
+          isSaturday: isSaturdayISO(iso),
         });
       }
 
       if (!cancelledRef.current) {
         setFactoryDays(serieFactory);
-        setCentrosPerf(centrosPerfCalc);
+        setCentrosPerf(perfCalculada);
       }
     } catch (e) {
       console.error(e);
@@ -496,9 +569,8 @@ export default function TvDashboardPage() {
   }, [loadData]);
 
   const resumo = useMemo(() => {
-    if (!centrosPerf.length) {
-      return { metaMes: 0, realMes: 0, aderMes: null, metaDia: 0, realDia: 0, esperadoDia: 0, aderDia: null };
-    }
+    if (!centrosPerf.length) return { metaMes: 0, realMes: 0, aderMes: null, metaDia: 0, realDia: 0, esperadoDia: 0, aderDia: null };
+    
     const metaMes = centrosPerf.reduce((s, c) => s + c.meta_mes, 0);
     const realMes = centrosPerf.reduce((s, c) => s + c.real_mes, 0);
     const metaDia = centrosPerf.reduce((s, c) => s + c.meta_dia, 0);
@@ -517,10 +589,9 @@ export default function TvDashboardPage() {
 
   const centrosOrdenados = useMemo(() => [...centrosPerf].sort((a, b) => (b.ader_dia ?? -Infinity) - (a.ader_dia ?? -Infinity)), [centrosPerf]);
   
-  // Se for Montagem, a paginação é menor para caber o card fixo (ex: 6 em vez de 8)
-  const itensPorPagina = scope === 'montagem' ? 6 : 8;
+  // PAGINAÇÃO: 3 colunas x 2 linhas = 6 itens (ajustado para caber o layout expandido)
+  const itensPorPagina = 6; 
   const centroPages = useMemo(() => chunk(centrosOrdenados, itensPorPagina), [centrosOrdenados, itensPorPagina]);
-  
   const totalSlides = 1 + Math.max(centroPages.length, 1);
 
   useEffect(() => {
@@ -539,52 +610,23 @@ export default function TvDashboardPage() {
         {/* Cabeçalho */}
         <Group justify="space-between" align="center">
           <Group gap="sm" align="center">
-             <Button 
-                variant="subtle" 
-                color="gray" 
-                size="md" 
-                leftSection={<IconArrowLeft size={20} />}
-                onClick={() => navigate('/tv')}
-                styles={{ root: { paddingLeft: 0, paddingRight: 10 } }}
-             >
-                Menu
-             </Button>
-            <ThemeIcon size="lg" radius="md" color="blue" variant="light">
-               <IconTrendingUp size={20} />
-            </ThemeIcon>
+             <Button variant="subtle" color="gray" size="md" leftSection={<IconArrowLeft size={20} />} onClick={() => navigate('/tv')} styles={{ root: { paddingLeft: 0, paddingRight: 10 } }}>Menu</Button>
+            <ThemeIcon size="lg" radius="md" color="blue" variant="light"><IconTrendingUp size={20} /></ThemeIcon>
             <Title order={2}>{tituloPainel}</Title>
           </Group>
 
           <Group gap="lg" align="center">
             {/* KPI CHIPS */}
             <Card padding="xs" radius="md" withBorder shadow="xs" bg="white">
-               <Group gap="xs">
-                 <Text size="xs" fw={700} c="dimmed">MÊS</Text>
-                 <Badge variant="light" color="gray" size="lg">Meta: {formatNum(resumo.metaMes)}h</Badge>
-                 <Badge variant="filled" color="blue" size="lg">Real: {formatNum(resumo.realMes)}h</Badge>
-                 <Badge variant="filled" color={perfColor(resumo.aderMes)} size="lg">{resumo.aderMes == null ? '-' : `${formatNum(resumo.aderMes, 1)}%`}</Badge>
-               </Group>
+               <Group gap="xs"><Text size="xs" fw={700} c="dimmed">MÊS</Text><Badge variant="light" color="gray" size="lg">Meta: {formatNum(resumo.metaMes)}h</Badge><Badge variant="filled" color="blue" size="lg">Real: {formatNum(resumo.realMes)}h</Badge><Badge variant="filled" color={perfColor(resumo.aderMes)} size="lg">{resumo.aderMes == null ? '-' : `${formatNum(resumo.aderMes, 1)}%`}</Badge></Group>
             </Card>
             <Card padding="xs" radius="md" withBorder shadow="xs" bg="white">
-               <Group gap="xs">
-                 <Text size="xs" fw={700} c="dimmed">DIA</Text>
-                 <Badge variant="light" color="gray" size="lg">Meta: {formatNum(resumo.metaDia)}h</Badge>
-                 <Badge variant="outline" color="blue" size="lg">Real: {formatNum(resumo.realDia)}h</Badge>
-                 <Badge variant="outline" color={perfColor(resumo.aderDia)} size="lg">{resumo.aderDia == null ? '-' : `${formatNum(resumo.aderDia, 1)}%`}</Badge>
-               </Group>
+               <Group gap="xs"><Text size="xs" fw={700} c="dimmed">DIA</Text><Badge variant="light" color="gray" size="lg">Meta: {formatNum(resumo.metaDia)}h</Badge><Badge variant="outline" color="blue" size="lg">Real: {formatNum(resumo.realDia)}h</Badge><Badge variant="outline" color={perfColor(resumo.aderDia)} size="lg">{resumo.aderDia == null ? '-' : `${formatNum(resumo.aderDia, 1)}%`}</Badge></Group>
             </Card>
             <Card padding="sm" radius="md" withBorder shadow="sm" bg="gray.1">
-                <Group gap="sm">
-                  <ThemeIcon size="lg" radius="xl" color="teal" variant="filled"><IconClock size={20} /></ThemeIcon>
-                  <Stack gap={0}>
-                      <Text size="xs" c="dimmed" fw={700} tt="uppercase">Atualizado em</Text>
-                      <Text size="lg" fw={900} c="dark">{lastUpdateText}</Text>
-                  </Stack>
-                </Group>
+                <Group gap="sm"><ThemeIcon size="lg" radius="xl" color="teal" variant="filled"><IconClock size={20} /></ThemeIcon><Stack gap={0}><Text size="xs" c="dimmed" fw={700} tt="uppercase">Atualizado em</Text><Text size="lg" fw={900} c="dark">{lastUpdateText}</Text></Stack></Group>
             </Card>
-            <ActionIcon variant="subtle" color="gray" onClick={toggleFullscreen}>
-              {isFullscreen ? <IconMinimize size={20} /> : <IconMaximize size={20} />}
-            </ActionIcon>
+            <ActionIcon variant="subtle" color="gray" onClick={toggleFullscreen}>{isFullscreen ? <IconMinimize size={20} /> : <IconMaximize size={20} />}</ActionIcon>
           </Group>
         </Group>
 
@@ -598,11 +640,7 @@ export default function TvDashboardPage() {
               <Group justify="space-between" mb="xs" align="center">
                 <Group gap="xs" align="center">
                    <ActionIcon variant="light" radius="xl" onClick={goPrev} size="lg"><IconChevronLeft size={18} /></ActionIcon>
-                   <Group gap={6}>
-                    {Array.from({ length: totalSlides }).map((_, idx) => (
-                      <ActionIcon key={idx} radius="xl" size="sm" variant={idx === activeSlide ? 'filled' : 'light'} color={idx === activeSlide ? 'blue' : 'gray'} onClick={() => setActiveSlide(idx)} />
-                    ))}
-                   </Group>
+                   <Group gap={6}>{Array.from({ length: totalSlides }).map((_, idx) => (<ActionIcon key={idx} radius="xl" size="sm" variant={idx === activeSlide ? 'filled' : 'light'} color={idx === activeSlide ? 'blue' : 'gray'} onClick={() => setActiveSlide(idx)} />))}</Group>
                    <ActionIcon variant="light" radius="xl" onClick={goNext} size="lg"><IconChevronRight size={18} /></ActionIcon>
                 </Group>
                 <Text fw={600} c="dimmed" size="sm">{activeSlide === 0 ? "Visão Geral" : `Máquinas - Pág ${activeSlide} de ${centroPages.length}`}</Text>
@@ -616,8 +654,6 @@ export default function TvDashboardPage() {
                   <SlideMaquinas 
                     page={centroPages[activeSlide - 1] ?? []} 
                     isFuture={contextDia.isFuture} 
-                    scope={scope} 
-                    resumo={resumo} // Passando o resumo para o Card Fixo
                   />
                 )}
               </div>
@@ -633,121 +669,94 @@ function SlideFactory({ dias }: { dias: FactoryDayRow[] }) {
   if (!dias.length) return <Group justify="center" align="center" h="100%"><Text c="dimmed" size="lg">Sem dados recentes.</Text></Group>;
   return (
     <Stack gap="md" h="100%">
-      <Group justify="space-between" align="center">
-        <Title order={3}>Produção Diária (Últimos 14 dias)</Title>
-        <Group><Badge size="lg" variant="dot" color="orange">Dia Útil</Badge><Badge size="lg" variant="dot" color="blue">Sábado</Badge></Group>
-      </Group>
+      <Group justify="space-between" align="center"><Title order={3}>Produção Diária (Últimos 14 dias)</Title><Group><Badge size="lg" variant="dot" color="orange">Dia Útil</Badge><Badge size="lg" variant="dot" color="blue">Sábado</Badge></Group></Group>
       <div style={{ flex: 1, minHeight: 0 }}>
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={dias} margin={{ top: 30, right: 0, left: 0, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.4} />
             <XAxis dataKey="label" tick={{ fontSize: 14, fontWeight: 500 }} tickMargin={10} />
-            <YAxis hide /> 
-            <ReTooltip content={<FactoryTooltip />} cursor={{ fill: 'rgba(0,0,0,0.05)' }}/>
-            <Bar dataKey="produzido" name="Produzido (h)" radius={[6, 6, 0, 0]} isAnimationActive={true}>
-              {dias.map((d, i) => <Cell key={i} fill={d.isSaturday ? '#3b82f6' : '#f97316'} />)}
-              <LabelList dataKey="produzido" content={<FactoryBarLabel />} />
-            </Bar>
+            <YAxis hide /> <ReTooltip content={<FactoryTooltip />} cursor={{ fill: 'rgba(0,0,0,0.05)' }}/>
+            <Bar dataKey="produzido" name="Produzido (h)" radius={[6, 6, 0, 0]} isAnimationActive={true}>{dias.map((d, i) => <Cell key={i} fill={d.isSaturday ? '#3b82f6' : '#f97316'} />)}<LabelList dataKey="produzido" content={<FactoryBarLabel />} /></Bar>
             <Line type="monotone" dataKey="meta" name="Meta diária (h)" stroke="#1f2937" strokeDasharray="5 5" dot={false} strokeWidth={3} />
           </ComposedChart>
         </ResponsiveContainer>
       </div>
-      <SimpleGrid cols={Math.min(dias.length, 7)} spacing="sm" mt="xs">
-        {dias.slice(-7).map((d) => (
-          <Card key={d.iso} padding="sm" radius="md" withBorder style={{ borderTop: `4px solid var(--mantine-color-${perfColor(d.pct)}-filled)` }}>
-            <Stack gap={2} align="center">
-              <Text size="sm" fw={700} c="dimmed">{d.label}</Text>
-              <Text size="xl" fw={800}>{d.produzido.toFixed(0)}h</Text>
-              <Badge variant="light" size="sm" color={perfColor(d.pct)}>{d.pct.toFixed(0)}%</Badge>
-            </Stack>
-          </Card>
-        ))}
-      </SimpleGrid>
+      <SimpleGrid cols={Math.min(dias.length, 7)} spacing="sm" mt="xs">{dias.slice(-7).map((d) => (<Card key={d.iso} padding="sm" radius="md" withBorder style={{ borderTop: `4px solid var(--mantine-color-${perfColor(d.pct)}-filled)` }}><Stack gap={2} align="center"><Text size="sm" fw={700} c="dimmed">{d.label}</Text><Text size="xl" fw={800}>{d.produzido.toFixed(0)}h</Text><Badge variant="light" size="sm" color={perfColor(d.pct)}>{d.pct.toFixed(0)}%</Badge></Stack></Card>))}</SimpleGrid>
     </Stack>
   );
 }
 
-function SlideMaquinas({ page, isFuture, scope, resumo }: { page: CentroPerf[]; isFuture: boolean; scope?: string; resumo?: any }) {
-  if (!page.length && scope !== 'montagem') return <Group justify="center" align="center" h="100%"><Text c="dimmed" size="xl">Nenhuma máquina neste painel.</Text></Group>;
+function SlideMaquinas({ page, isFuture }: { page: CentroPerf[]; isFuture: boolean }) {
+  if (!page.length) return <Group justify="center" align="center" h="100%"><Text c="dimmed" size="xl">Nenhuma máquina neste painel.</Text></Group>;
 
   return (
     <Stack gap="md" h="100%">
-      <Group justify="space-between" align="center">
-        <Title order={2}>Performance por Máquina • Visão do Dia</Title>
-      </Group>
+      <Group justify="space-between" align="center"><Title order={2}>Performance por Máquina • Visão do Dia</Title></Group>
 
-      {/* CARD FIXO DE RESUMO (Apenas para Montagem) */}
-      {scope === 'montagem' && resumo && (
-        <Card withBorder radius="lg" padding="md" bg="blue.0" style={{ border: '2px solid var(--mantine-color-blue-3)' }}>
-           <Group justify="space-between" align="center">
-              <Group>
-                 <ThemeIcon size={48} radius="md" variant="filled" color="blue"><IconUsersGroup size={28} /></ThemeIcon>
-                 <div>
-                    <Text size="sm" c="dimmed" fw={700} tt="uppercase">Consolidado Montagem</Text>
-                    <Text size="xl" fw={900} c="blue.9">Resultado da Equipe</Text>
-                 </div>
-              </Group>
-              
-              <Group gap={40}>
-                 <Stack gap={0} align="center">
-                    <Text size="xs" c="dimmed" fw={700} tt="uppercase">Produzido</Text>
-                    <Text size="xl" fw={900} c="dark">{formatNum(resumo.realDia)} h</Text>
-                 </Stack>
-                 <Stack gap={0} align="center">
-                    <Text size="xs" c="dimmed" fw={700} tt="uppercase">Meta Total</Text>
-                    <Text size="xl" fw={900} c="dark">{formatNum(resumo.metaDia)} h</Text>
-                 </Stack>
-                 <Stack gap={0} align="center">
-                    <Text size="xs" c="dimmed" fw={700} tt="uppercase">Aderência</Text>
-                    <Badge size="xl" variant="filled" color={perfColor(resumo.aderDia)}>
-                       {resumo.aderDia ? `${formatNum(resumo.aderDia, 1)}%` : '-'}
-                    </Badge>
-                 </Stack>
-              </Group>
-           </Group>
-        </Card>
-      )}
-
-      {/* Grid de Máquinas (Se houver) */}
-      {page.length > 0 ? (
-        <SimpleGrid cols={4} spacing="md" verticalSpacing="md" style={{ flex: 1, minHeight: 0 }}>
-          {page.map((c) => {
-            const pctEsperado = c.esperado_dia > 0 ? (c.real_dia / c.esperado_dia) * 100 : 0;
-            const pctMeta = c.meta_dia > 0 ? (c.real_dia / c.meta_dia) * 100 : 0;
-            const cor = perfColor(c.ader_dia);
-            return (
-              <Card key={c.centro_id} withBorder radius="lg" padding="lg" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                <Stack gap="md" h="100%">
-                  <Group justify="space-between" align="flex-start">
-                    <Stack gap={0}>
-                      <Text fw={900} size="xl" style={{ fontSize: '1.5rem' }}>{c.codigo}</Text>
+      {/* Grid de Máquinas - 3 Colunas */}
+      <SimpleGrid cols={3} spacing="lg" verticalSpacing="lg" style={{ flex: 1, minHeight: 0 }}>
+        {page.map((c) => {
+          const pctEsperado = c.esperado_dia > 0 ? (c.real_dia / c.esperado_dia) * 100 : 0;
+          const pctMeta = c.meta_dia > 0 ? (c.real_dia / c.meta_dia) * 100 : 0;
+          const cor = perfColor(c.ader_dia);
+          return (
+            <Card key={c.centro_id} withBorder radius="lg" padding="lg" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+              <Stack gap="md" h="100%">
+                <Group justify="space-between" align="flex-start">
+                  <Stack gap={0}>
+                      <Group gap={4}>
+                          <Text fw={900} size="xl" style={{ fontSize: '1.6rem' }}>{c.codigo}</Text>
+                          {c.is_parent && <IconArrowMerge size={22} color="gray" style={{ opacity: 0.5 }} />}
+                      </Group>
                       {c.is_stale && <Badge variant="filled" color="orange" size="sm" leftSection={<IconAlertTriangle size={12} />}>Dados de {c.last_ref_time}</Badge>}
-                    </Stack>
-                    {isFuture ? <Badge variant="light" color="gray" size="lg">FUTURO</Badge> : <Badge color={cor} variant="filled" size="xl">{c.ader_dia == null ? '-' : `${formatNum(c.ader_dia, 0)}%`}</Badge>}
-                  </Group>
-                  <Group gap="md" align="center" style={{ flex: 1 }} wrap="nowrap">
-                    <RingProgress size={130} thickness={14} roundCaps sections={[{ value: clamp(c.ader_dia ?? 0, 0, 200), color: perfColor(c.ader_dia) }]} label={<Text ta="center" size="md" fw={900} c={cor}>{c.ader_dia ? `${c.ader_dia.toFixed(0)}%` : '-'}</Text>} />
-                    <Stack gap={4} style={{ minWidth: 0 }}>
-                        <Text size="sm" c="dimmed" fw={700} tt="uppercase" style={{ letterSpacing: '0.5px' }}>Produzido</Text>
-                        <Text fw={900} style={{ fontSize: '2.6rem', lineHeight: 1, color: '#1f2937' }}>{formatNum(c.real_dia)}h</Text>
-                        <Stack gap={2} mt={6}>
-                          <Group gap={6} align="baseline"><Text size="sm" c="dimmed" fw={600}>Esperado:</Text><Text size="md" fw={800} c="dimmed">{formatNum(c.esperado_dia)}h</Text></Group>
-                          <Group gap={6} align="baseline"><Text size="sm" c="dimmed" fw={600}>Meta Dia:</Text><Text size="md" fw={800} c="dimmed">{formatNum(c.meta_dia)}h</Text></Group>
-                        </Stack>
-                    </Stack>
-                  </Group>
-                  <Stack gap="sm">
-                    <Stack gap={2}><Group justify="space-between"><Text size="sm" fw={700} c="dimmed">Progresso vs Esperado</Text><Text size="sm" fw={800}>{clamp(pctEsperado).toFixed(0)}%</Text></Group><Progress size="xl" radius="md" value={clamp(pctEsperado)} color={perfColor(pctEsperado)} striped animated={pctEsperado < 100} /></Stack>
-                    <Stack gap={2}><Group justify="space-between"><Text size="sm" fw={700} c="dimmed">Progresso vs Meta</Text><Text size="sm" fw={800}>{clamp(pctMeta).toFixed(0)}%</Text></Group><Progress size="xl" radius="md" value={clamp(pctMeta)} color="blue" /></Stack>
                   </Stack>
+                  {isFuture ? <Badge variant="light" color="gray" size="lg">FUTURO</Badge> : <Badge color={cor} variant="filled" size="xl">{c.ader_dia == null ? '-' : `${formatNum(c.ader_dia, 0)}%`}</Badge>}
+                </Group>
+
+                <Group gap="md" align="center" style={{ flex: 1 }} wrap="nowrap">
+                  <RingProgress size={130} thickness={14} roundCaps sections={[{ value: clamp(c.ader_dia ?? 0, 0, 200), color: perfColor(c.ader_dia) }]} label={<Text ta="center" size="md" fw={900} c={cor}>{c.ader_dia ? `${c.ader_dia.toFixed(0)}%` : '-'}</Text>} />
+                  <Stack gap={4} style={{ minWidth: 0, flex: 1 }}>
+                      <Text size="sm" c="dimmed" fw={700} tt="uppercase" style={{ letterSpacing: '0.5px' }}>Produzido</Text>
+                      <Text fw={900} style={{ fontSize: '2.8rem', lineHeight: 1, color: '#1f2937' }}>{formatNum(c.real_dia)}h</Text>
+                      <Stack gap={0} mt={4}>
+                          <Text size="sm" c="dimmed">Esperado: <b>{formatNum(c.esperado_dia)}h</b></Text>
+                          <Text size="sm" c="dimmed">Meta Dia: <b>{formatNum(c.meta_dia)}h</b></Text>
+                      </Stack>
+                  </Stack>
+                </Group>
+
+                {/* Lista de Contribuição para Agrupadores */}
+                {c.is_parent && (
+                    <>
+                    <Divider my={4} />
+                    <Stack gap={4} style={{ flex: 1, maxHeight: 140, overflow: 'hidden' }}>
+                        <Text size="xs" c="dimmed" fw={700}>CONTRIBUIÇÃO POR CÉLULA:</Text>
+                        <ScrollArea h="100%" offsetScrollbars type="never">
+                          <Stack gap={6}>
+                              {c.contribuintes.map((child, idx) => (
+                                  <Group key={idx} justify="space-between" style={{ borderBottom: '1px solid #f1f3f5', paddingBottom: 4 }}>
+                                      <Group gap={4}>
+                                          <Text size="sm" fw={600}>{child.codigo}</Text>
+                                          {child.is_stale && <IconClock size={14} color="orange" />}
+                                      </Group>
+                                      <Text size="sm" fw={700}>{child.real.toFixed(2)}h</Text>
+                                  </Group>
+                              ))}
+                          </Stack>
+                        </ScrollArea>
+                    </Stack>
+                    </>
+                )}
+
+                <Stack gap="sm" mt={c.is_parent ? 'auto' : 0}>
+                  <Stack gap={2}><Group justify="space-between"><Text size="sm" fw={700} c="dimmed">Progresso vs Esperado</Text><Text size="sm" fw={800}>{clamp(c.real_dia > 0 && c.esperado_dia > 0 ? (c.real_dia/c.esperado_dia)*100 : 0).toFixed(0)}%</Text></Group><Progress size="xl" radius="md" value={clamp(c.real_dia > 0 && c.esperado_dia > 0 ? (c.real_dia/c.esperado_dia)*100 : 0)} color={perfColor(c.real_dia > 0 && c.esperado_dia > 0 ? (c.real_dia/c.esperado_dia)*100 : 0)} striped animated={c.real_dia < c.esperado_dia} /></Stack>
+                  <Stack gap={2}><Group justify="space-between"><Text size="sm" fw={700} c="dimmed">Progresso vs Meta</Text><Text size="sm" fw={800}>{clamp(c.pct_meta_dia ?? 0).toFixed(0)}%</Text></Group><Progress size="xl" radius="md" value={clamp(c.pct_meta_dia ?? 0)} color="blue" /></Stack>
                 </Stack>
-              </Card>
-            );
-          })}
-        </SimpleGrid>
-      ) : (
-        scope === 'montagem' && <Group justify="center" h="100%"><Text c="dimmed">Sem bancadas ativas.</Text></Group>
-      )}
+              </Stack>
+            </Card>
+          );
+        })}
+      </SimpleGrid>
     </Stack>
   );
 }
