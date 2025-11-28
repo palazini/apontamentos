@@ -7,7 +7,7 @@ import {
 import { notifications } from '@mantine/notifications';
 import { supabase } from '../../lib/supabaseClient';
 import {
-  IconPlus, IconTrash, IconCheck, IconX, IconEngine, IconBox
+  IconPlus, IconTrash, IconCheck, IconX,
 } from '@tabler/icons-react';
 import { fetchAliases } from '../../services/db';
 
