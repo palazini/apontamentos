@@ -1,4 +1,4 @@
-// src/components/Layout.tsx
+﻿// src/components/Layout.tsx
 import type { ReactNode } from 'react';
 import { Link, useLocation, Outlet } from 'react-router-dom';
 import { AppShell, NavLink, Group, Text, Image, Badge } from '@mantine/core';
@@ -10,6 +10,7 @@ import {
   IconUsers,
   IconGauge,
   IconDeviceTv,
+  IconSpeakerphone, // <--- NOVO IMPORT
 } from '@tabler/icons-react';
 
 function Brand() {
@@ -58,6 +59,14 @@ const links: LinkItem[] = [
     icon: <IconUpload size={16} />,
     exact: false,
   },
+  // --- NOVO ITEM ---
+  {
+    label: 'Avisos TV',
+    to: '/avisos',
+    icon: <IconSpeakerphone size={16} />,
+    exact: true,
+  },
+  // ----------------
   {
     label: 'Modo TV',
     to: '/tv',
