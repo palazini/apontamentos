@@ -33,6 +33,7 @@ import {
   IconMinimize,
   IconTrendingUp,
   IconClock,
+  IconAlertTriangle, // Ícone para o badge de alerta
 } from '@tabler/icons-react';
 
 import {
@@ -131,6 +132,14 @@ function isCentroAtivoNoDia(c: CentroSmart, dataWip: Date): boolean {
   return true;
 }
 
+// Extrai HH:MM de uma string ISO ou Date
+function extractTime(isoOrDate: string | Date | null): string {
+  if (!isoOrDate) return '00:00';
+  const d = typeof isoOrDate === 'string' ? new Date(isoOrDate) : isoOrDate;
+  if (Number.isNaN(d.getTime())) return '00:00';
+  return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+}
+
 /* ========= tipos locais ========= */
 type FactoryDayRow = {
   iso: string;
@@ -151,13 +160,16 @@ type CentroPerf = {
   real_dia: number;
   real_mes: number;
 
-  // novo: cálculo “modo Visão do dia”
   esperado_dia: number;
   desvio_dia: number;
   ader_dia: number | null; 
   pct_meta_dia: number | null; 
 
   ader_mes: number | null;
+
+  // NOVOS CAMPOS PARA CONTROLE DE ESTAGNAÇÃO
+  is_stale: boolean;       // Se true, a máquina parou de apontar
+  last_ref_time: string;   // 'HH:mm' do último apontamento da máquina
 };
 
 /* ========= helpers gerais ========= */
@@ -216,12 +228,9 @@ function FactoryTooltip({ active, payload, label }: any) {
   );
 }
 
-/* ========= label customizado das colunas (Otimizado para TV) ========= */
 function FactoryBarLabel(props: any) {
   const { x, y, width, height, value } = props;
   if (value == null) return null;
-
-  // Se a coluna for muito baixa, esconde para não sobrepor o eixo
   if (!height || height < 20) return null;
 
   const text = Number(value).toFixed(1); 
@@ -229,9 +238,9 @@ function FactoryBarLabel(props: any) {
   return (
     <text
       x={x + width / 2}
-      y={y - 10} // Subi um pouco mais para dar respiro
+      y={y - 10}
       textAnchor="middle"
-      fontSize={16} // Aumentei para leitura de longe
+      fontSize={16}
       fontWeight={700}
       fill="#374151"
       style={{ pointerEvents: 'none' }}
@@ -251,13 +260,11 @@ export default function TvDashboardPage() {
   const [centrosPerf, setCentrosPerf] = useState<CentroPerf[]>([]);
   const [lastUpdateText, setLastUpdateText] = useState<string>('–');
   
-  // REMOVIDO: horaRefLabel pois não estava sendo usado na interface
-  
   const [contextDia, setContextDia] = useState<{
     isPast: boolean;
     isToday: boolean;
     isFuture: boolean;
-    frac: number;
+    frac: number; // Fração GLOBAL (baseada no upload)
   }>({ isPast: false, isToday: false, isFuture: false, frac: 0 });
 
   const [activeSlide, setActiveSlide] = useState(0);
@@ -299,6 +306,7 @@ export default function TvDashboardPage() {
       const diaRef = isoToLocalDate(lastDayIso);
       const diaRefLocal = startOfDayLocal(diaRef);
       
+      // 1. Identificar o "AGORA GLOBAL" (do último upload ativo)
       const uploadsDia: VUploadDia[] = await fetchUploadsPorDia(lastDayIso);
       let ativo =
         uploadsDia.find((u) => u.ativo) ??
@@ -312,9 +320,12 @@ export default function TvDashboardPage() {
           .at(-1) ??
         null;
 
-      let horaRef = '00:44';
+      let horaRefGlobal = '00:00';
+      let dataRefGlobalObj = new Date();
+
       if (ativo) {
         const dt = new Date(ativo.enviado_em);
+        dataRefGlobalObj = dt;
         const dataStr = dt.toLocaleDateString('pt-BR', {
           day: '2-digit',
           month: '2-digit',
@@ -323,7 +334,7 @@ export default function TvDashboardPage() {
           hour: '2-digit',
           minute: '2-digit',
         });
-        horaRef = horaStr;
+        horaRefGlobal = horaStr;
         if (!cancelledRef.current) {
           setLastUpdateText(`${dataStr} • ${horaStr}`);
         }
@@ -336,10 +347,12 @@ export default function TvDashboardPage() {
       const isPast = diaRefLocal < todayLocal;
       const isToday = diaRefLocal.getTime() === todayLocal.getTime();
       const isFuture = !isPast && !isToday;
-      const frac = isPast ? 1 : isFuture ? 0 : fracDiaLogico(horaRef);
+      
+      // Fração Global (padrão para quem estiver atualizado)
+      const fracGlobal = isPast ? 1 : isFuture ? 0 : fracDiaLogico(horaRefGlobal);
 
       if (!cancelledRef.current) {
-        setContextDia({ isPast, isToday, isFuture, frac });
+        setContextDia({ isPast, isToday, isFuture, frac: fracGlobal });
       }
 
       const startMes = new Date(
@@ -349,7 +362,7 @@ export default function TvDashboardPage() {
       );
       const diasCorridosMes = countDaysExcludingSundays(startMes, diaRefLocal);
 
-      const startSerie = addDays(diaRefLocal, -13); // últimos ~14 dias
+      const startSerie = addDays(diaRefLocal, -13); 
 
       // ⬇️ BUSCA DADOS
       const [metaTotal, metasAtuaisAll, fabRange, centrosSmart] =
@@ -417,6 +430,7 @@ export default function TvDashboardPage() {
 
         const prodMesByCentro = new Map<number, number>();
         const prodDiaByCentro = new Map<number, number>();
+        const refDiaByCentro = new Map<number, string>(); // Guarda o data_referencia
 
         series.forEach((r: any) => {
           if (isSundayISO(r.data_wip)) return;
@@ -427,6 +441,10 @@ export default function TvDashboardPage() {
 
           if (r.data_wip === lastDayIso) {
             prodDiaByCentro.set(cid, (prodDiaByCentro.get(cid) ?? 0) + val);
+            // Salva a referência se existir
+            if (r.data_referencia) {
+              refDiaByCentro.set(cid, r.data_referencia);
+            }
           }
         });
 
@@ -439,7 +457,29 @@ export default function TvDashboardPage() {
           const realMes = prodMesByCentro.get(cid) ?? 0;
           const realDia = prodDiaByCentro.get(cid) ?? 0;
 
-          const esperado = +(metaDia * frac).toFixed(2);
+          // --- LÓGICA DE DADOS ESTAGNADOS ---
+          const dataRefLocalStr = refDiaByCentro.get(cid);
+          let fracIndividual = fracGlobal;
+          let isStale = false;
+          let lastRefTime = horaRefGlobal;
+
+          if (dataRefLocalStr && !isFuture && !isPast) {
+             // Temos uma referência específica da máquina
+             const refDate = new Date(dataRefLocalStr);
+             const refTimeStr = extractTime(refDate);
+             lastRefTime = refTimeStr;
+
+             // Calcula fração baseada na hora da máquina
+             fracIndividual = fracDiaLogico(refTimeStr);
+
+             // Verifica se está "velho" comparado ao global (tolerância de 2 min)
+             const diffMs = dataRefGlobalObj.getTime() - refDate.getTime();
+             if (diffMs > 2 * 60 * 1000) { 
+               isStale = true;
+             }
+          }
+
+          const esperado = +(metaDia * fracIndividual).toFixed(2);
 
           let aderDia: number | null = null;
           if (!isFuture) {
@@ -470,6 +510,10 @@ export default function TvDashboardPage() {
             pct_meta_dia:
               pctMetaDia !== null ? +pctMetaDia.toFixed(2) : null,
             ader_mes: aderMes !== null ? +aderMes.toFixed(2) : null,
+            
+            // Novos
+            is_stale: isStale,
+            last_ref_time: lastRefTime,
           };
         });
       }
@@ -526,6 +570,7 @@ export default function TvDashboardPage() {
     const aderMes = metaMes > 0 ? (realMes / metaMes) * 100 : null;
 
     let aderDia: number | null = null;
+    // O resumo global usa a soma dos esperados individuais
     if (!contextDia.isFuture) {
       if (esperadoDia > 0) {
         aderDia = (realDia / esperadoDia) * 100;
@@ -614,15 +659,15 @@ export default function TvDashboardPage() {
                </Group>
             </Card>
 
-            {/* STATUS DE ATUALIZAÇÃO - AGORA DESTACADO */}
+            {/* STATUS DE ATUALIZAÇÃO */}
             <Card padding="sm" radius="md" withBorder shadow="sm" bg="gray.1">
                 <Group gap="sm">
                   <ThemeIcon size="lg" radius="xl" color="teal" variant="filled">
                      <IconClock size={20} />
                   </ThemeIcon>
                   <Stack gap={0}>
-                     <Text size="xs" c="dimmed" fw={700} tt="uppercase">Atualizado em</Text>
-                     <Text size="lg" fw={900} c="dark">{lastUpdateText}</Text>
+                      <Text size="xs" c="dimmed" fw={700} tt="uppercase">Atualizado em</Text>
+                      <Text size="lg" fw={900} c="dark">{lastUpdateText}</Text>
                   </Stack>
                 </Group>
             </Card>
@@ -817,14 +862,29 @@ function SlideMaquinas({ page, isFuture }: { page: CentroPerf[]; isFuture: boole
               key={c.centro_id}
               withBorder
               radius="lg"
-              padding="lg" // Aumentado padding interno
+              padding="lg"
               style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}
             >
               <Stack gap="md" style={{ height: '100%' }}>
                 
                 {/* 1. Cabeçalho: Nome Grande + Badge Grande */}
                 <Group justify="space-between" align="flex-start">
-                  <Text fw={900} size="xl" style={{ fontSize: '1.5rem' }}>{c.codigo}</Text>
+                  <Stack gap={0}>
+                    <Text fw={900} size="xl" style={{ fontSize: '1.5rem' }}>{c.codigo}</Text>
+                    
+                    {/* INDICADOR DE DADOS ESTAGNADOS */}
+                    {c.is_stale && (
+                        <Badge 
+                            variant="filled" 
+                            color="orange" 
+                            size="sm" 
+                            leftSection={<IconAlertTriangle size={12} />}
+                        >
+                            Dados de {c.last_ref_time}
+                        </Badge>
+                    )}
+                  </Stack>
+
                   {isFuture ? (
                     <Badge variant="light" color="gray" size="lg">FUTURO</Badge>
                   ) : (
@@ -837,8 +897,8 @@ function SlideMaquinas({ page, isFuture }: { page: CentroPerf[]; isFuture: boole
                 {/* 2. Centro: Gráfico + Valores GIGANTES */}
                 <Group gap="md" align="center" style={{ flex: 1 }} wrap="nowrap">
                   <RingProgress
-                    size={130} // Levemente maior
-                    thickness={14} // Mais espesso
+                    size={130}
+                    thickness={14}
                     roundCaps
                     sections={[{ value: clamp(c.ader_dia ?? 0, 0, 200), color: perfColor(c.ader_dia) }]}
                     label={
@@ -848,40 +908,40 @@ function SlideMaquinas({ page, isFuture }: { page: CentroPerf[]; isFuture: boole
                     }
                   />
                   
-                  {/* Bloco de texto otimizado para TV */}
                   <Stack gap={4} style={{ minWidth: 0 }}>
-                     <Text size="sm" c="dimmed" fw={700} tt="uppercase" style={{ letterSpacing: '0.5px' }}>
+                      <Text size="sm" c="dimmed" fw={700} tt="uppercase" style={{ letterSpacing: '0.5px' }}>
                         Produzido
-                     </Text>
-                     
-                     {/* NÚMERO GIGANTE PARA LEITURA DISTANTE */}
-                     <Text fw={900} style={{ fontSize: '2.6rem', lineHeight: 1, color: '#1f2937' }}>
+                      </Text>
+                      
+                      {/* NÚMERO GIGANTE */}
+                      <Text fw={900} style={{ fontSize: '2.6rem', lineHeight: 1, color: '#1f2937' }}>
                         {formatNum(c.real_dia)}h
-                     </Text>
-                     
-                     {/* Metas secundárias com fonte legível (não miúda) */}
-                     <Stack gap={2} mt={6}>
-                        <Group gap={6} align="baseline">
-                           <Text size="sm" c="dimmed" fw={600}>Esperado:</Text>
-                           <Text size="md" fw={800} c="dimmed">{formatNum(c.esperado_dia)}h</Text>
-                        </Group>
-                        <Group gap={6} align="baseline">
-                           <Text size="sm" c="dimmed" fw={600}>Meta Dia:</Text>
-                           <Text size="md" fw={800} c="dimmed">{formatNum(c.meta_dia)}h</Text>
-                        </Group>
-                     </Stack>
+                      </Text>
+                      
+                      {/* Metas secundárias */}
+                      <Stack gap={2} mt={6}>
+                         <Group gap={6} align="baseline">
+                            <Text size="sm" c="dimmed" fw={600}>Esperado:</Text>
+                            <Text size="md" fw={800} c="dimmed">{formatNum(c.esperado_dia)}h</Text>
+                            {/* Se estiver stale, um pequeno indicador visual extra no texto pode ajudar, mas o badge já resolve */}
+                         </Group>
+                         <Group gap={6} align="baseline">
+                            <Text size="sm" c="dimmed" fw={600}>Meta Dia:</Text>
+                            <Text size="md" fw={800} c="dimmed">{formatNum(c.meta_dia)}h</Text>
+                         </Group>
+                      </Stack>
                   </Stack>
                 </Group>
 
-                {/* 3. Barras Inferiores grossas (size="xl") */}
+                {/* 3. Barras Inferiores */}
                 <Stack gap="sm">
                   <Stack gap={2}>
                     <Group justify="space-between">
-                       <Text size="sm" fw={700} c="dimmed">Progresso vs Esperado</Text>
-                       <Text size="sm" fw={800}>{clamp(pctEsperado).toFixed(0)}%</Text>
+                        <Text size="sm" fw={700} c="dimmed">Progresso vs Esperado</Text>
+                        <Text size="sm" fw={800}>{clamp(pctEsperado).toFixed(0)}%</Text>
                     </Group>
                     <Progress 
-                        size="xl" // Barra Grossa
+                        size="xl" 
                         radius="md" 
                         value={clamp(pctEsperado)} 
                         color={perfColor(pctEsperado)} 
@@ -892,11 +952,11 @@ function SlideMaquinas({ page, isFuture }: { page: CentroPerf[]; isFuture: boole
                   
                   <Stack gap={2}>
                     <Group justify="space-between">
-                       <Text size="sm" fw={700} c="dimmed">Progresso vs Meta</Text>
-                       <Text size="sm" fw={800}>{clamp(pctMeta).toFixed(0)}%</Text>
+                        <Text size="sm" fw={700} c="dimmed">Progresso vs Meta</Text>
+                        <Text size="sm" fw={800}>{clamp(pctMeta).toFixed(0)}%</Text>
                     </Group>
                     <Progress 
-                        size="xl" // Barra Grossa
+                        size="xl" 
                         radius="md" 
                         value={clamp(pctMeta)} 
                         color="blue" 
