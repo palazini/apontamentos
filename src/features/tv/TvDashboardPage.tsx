@@ -17,6 +17,9 @@ import {
   Button,
   ScrollArea,
   Divider,
+  Center,
+  Image,
+  Transition,
 } from '@mantine/core';
 import {
   ResponsiveContainer,
@@ -536,6 +539,9 @@ export default function TvDashboardPage() {
         if (isSundayISO(iso)) continue; 
         const prod = +(historyAgregadoGlobal.get(iso) ?? 0).toFixed(2);
         const pct = metaTotalCards > 0 ? (prod / metaTotalCards) * 100 : 100;
+        const bateuMeta = metaTotalCards > 0 && prod >= metaTotalCards;
+        // COR VERDE SE BATEU META, SENÃO AZUL/LARANJA
+        const color = bateuMeta ? '#16a34a' : (isSaturdayISO(iso) ? '#3b82f6' : '#f97316');
         serieFactory.push({ iso, label: shortBR(iso), produzido: prod, meta: metaTotalCards, pct, isSaturday: isSaturdayISO(iso) });
       }
 
@@ -569,7 +575,6 @@ export default function TvDashboardPage() {
   const resumo = useMemo(() => {
     if (!centrosPerf.length) return { metaMes: 0, realMes: 0, aderMes: null, metaDia: 0, realDia: 0, esperadoDia: 0, aderDia: null };
     
-    // Filtra para somar apenas os "Líderes" (Pais ou sem pai) para não duplicar no cabeçalho
     const lideres = centrosPerf.filter(c => c.is_parent || !c.has_parent);
     
     return lideres.reduce((acc, c) => {
@@ -582,7 +587,6 @@ export default function TvDashboardPage() {
     }, { metaMes: 0, realMes: 0, aderMes: null, metaDia: 0, realDia: 0, esperadoDia: 0, aderDia: null });
   }, [centrosPerf, contextDia]);
 
-  // ORDENAÇÃO E PAGINAÇÃO INTELIGENTE (PINNED)
   const centroPages = useMemo(() => {
       const pinnedItems = centrosPerf.filter(c => c.pinned);
       const regularItems = centrosPerf.filter(c => !c.pinned).sort((a, b) => (b.ader_dia ?? -Infinity) - (a.ader_dia ?? -Infinity));
@@ -603,18 +607,26 @@ export default function TvDashboardPage() {
       return regularChunks.map(c => [...pinnedItems, ...c]);
   }, [centrosPerf]);
 
-  // CORREÇÃO PAGINAÇÃO: Garante slide 0 + slides de conteúdo
-  const totalSlides = 1 + Math.max(centroPages.length, 0); 
-
-  useEffect(() => {
-      setActiveSlide(0);
-  }, [scope, centroPages.length]);
+  // TOTAL SLIDES = 1 (Factory) + Pages + 1 (Branding)
+  // CORREÇÃO: Garantir que centroPages.length não seja negativo, mas o array nunca é negativo.
+  // O +1 do Branding é adicionado aqui.
+  const totalSlides = 1 + Math.max(centroPages.length, 0) + 1; 
 
   useEffect(() => {
     if (totalSlides <= 1) return;
-    const id = window.setInterval(() => { setActiveSlide((prev) => (prev + 1) % totalSlides); }, 15000);
-    return () => window.clearInterval(id);
-  }, [totalSlides]);
+    
+    const isBrandingSlide = activeSlide === totalSlides - 1;
+    const duration = isBrandingSlide ? 3000 : 15000; // 6s para Branding, 15s para o resto
+
+    const id = window.setTimeout(() => { 
+        setActiveSlide((prev) => (prev + 1) % totalSlides); 
+    }, duration);
+
+    return () => window.clearTimeout(id);
+  }, [totalSlides, activeSlide]); 
+
+  // Reseta se o escopo mudar
+  useEffect(() => { setActiveSlide(0); }, [scope, centroPages.length]);
 
   const goPrev = () => setActiveSlide((prev) => (prev - 1 + totalSlides) % totalSlides);
   const goNext = () => setActiveSlide((prev) => (prev + 1) % totalSlides);
@@ -655,12 +667,20 @@ export default function TvDashboardPage() {
                    <ActionIcon variant="light" radius="xl" onClick={goNext} size="lg"><IconChevronRight size={18} /></ActionIcon>
                 </Group>
                 <Text fw={600} c="dimmed" size="sm">
-                    {activeSlide === 0 ? "Visão Geral" : `Máquinas - Pág ${activeSlide} de ${centroPages.length}`}
+                     {activeSlide === 0 ? "Visão Geral" 
+                      : activeSlide === totalSlides - 1 ? "" 
+                      : `Máquinas - Pág ${activeSlide} de ${centroPages.length}`}
                 </Text>
               </Group>
 
               <div style={{ flex: 1, minHeight: 0 }}>
-                {activeSlide === 0 ? <SlideFactory dias={factoryDays} /> : <SlideMaquinas page={centroPages[activeSlide - 1] ?? []} isFuture={contextDia.isFuture} />}
+                {activeSlide === 0 ? (
+                   <SlideFactory dias={factoryDays} />
+                ) : activeSlide === totalSlides - 1 ? (
+                   <SlideBranding />
+                ) : (
+                   <SlideMaquinas page={centroPages[activeSlide - 1] ?? []} isFuture={contextDia.isFuture} />
+                )}
               </div>
             </>
           )}
@@ -681,18 +701,14 @@ function SlideFactory({ dias }: { dias: FactoryDayRow[] }) {
             <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.4} />
             <XAxis dataKey="label" tick={{ fontSize: 14, fontWeight: 500 }} tickMargin={10} />
             <YAxis hide /> <ReTooltip content={<FactoryTooltip />} cursor={{ fill: 'rgba(0,0,0,0.05)' }}/>
-            
-            {/* GRÁFICO COM CORES INTELIGENTES */}
             <Bar dataKey="produzido" name="Produzido (h)" radius={[6, 6, 0, 0]} isAnimationActive={true}>
                 {dias.map((d, i) => {
-                    // Lógica de Cores: Verde se bateu a meta, Azul Sábado, Laranja Dia Útil
                     const bateuMeta = d.meta > 0 && d.produzido >= d.meta;
                     const color = bateuMeta ? '#16a34a' : (d.isSaturday ? '#3b82f6' : '#f97316');
                     return <Cell key={i} fill={color} />;
                 })}
                 <LabelList dataKey="produzido" content={<FactoryBarLabel />} />
             </Bar>
-            
             <Line type="monotone" dataKey="meta" name="Meta diária (h)" stroke="#1f2937" strokeDasharray="5 5" dot={false} strokeWidth={3} />
           </ComposedChart>
         </ResponsiveContainer>
@@ -709,7 +725,6 @@ function SlideMaquinas({ page, isFuture }: { page: CentroPerf[]; isFuture: boole
     <Stack gap="md" h="100%">
       <Group justify="space-between" align="center"><Title order={2}>Performance por Máquina • Visão do Dia</Title></Group>
 
-      {/* Grid de Máquinas - 3 Colunas */}
       <SimpleGrid cols={3} spacing="lg" verticalSpacing="lg" style={{ flex: 1, minHeight: 0 }}>
         {page.map((c) => {
           const pctEsperado = c.esperado_dia > 0 ? (c.real_dia / c.esperado_dia) * 100 : 0;
@@ -739,31 +754,31 @@ function SlideMaquinas({ page, isFuture }: { page: CentroPerf[]; isFuture: boole
                           <Text size="sm" c="dimmed">Meta Dia: <b>{formatNum(c.meta_dia)}h</b></Text>
                       </Stack>
                   </Stack>
+                  
+                  {c.is_parent && (
+                    <>
+                      <Divider orientation="vertical" mx={2} style={{ height: 100 }} />
+                      <Stack gap={2} style={{ flex: 1, height: 130, overflow: 'hidden' }}>
+                         <Text size="xs" c="dimmed" fw={700}>DETALHE:</Text>
+                         <ScrollArea h="100%" type="never" offsetScrollbars>
+                            <Stack gap={4}>
+                              {c.contribuintes.map((child, idx) => (
+                                <Group key={idx} justify="space-between" wrap="nowrap" style={{ borderBottom: '1px solid #f8f9fa', paddingBottom: 2 }}>
+                                    <Text size="xs" fw={600} truncate title={child.codigo} style={{maxWidth: 90}}>{child.codigo}</Text>
+                                    <Group gap={4}>
+                                        {child.is_stale && <IconClock size={12} color="orange" />}
+                                        <Text size="xs" fw={700}>{child.real.toFixed(1)}</Text>
+                                    </Group>
+                                </Group>
+                              ))}
+                            </Stack>
+                         </ScrollArea>
+                      </Stack>
+                    </>
+                  )}
                 </Group>
 
-                {c.is_parent && (
-                    <>
-                    <Divider my={4} />
-                    <Stack gap={4} style={{ flex: 1, maxHeight: 140, overflow: 'hidden' }}>
-                        <Text size="xs" c="dimmed" fw={700}>CONTRIBUIÇÃO POR CÉLULA:</Text>
-                        <ScrollArea h="100%" offsetScrollbars type="never">
-                          <Stack gap={6}>
-                              {c.contribuintes.map((child, idx) => (
-                                  <Group key={idx} justify="space-between" style={{ borderBottom: '1px solid #f1f3f5', paddingBottom: 4 }}>
-                                      <Group gap={4}>
-                                          <Text size="sm" fw={600}>{child.codigo}</Text>
-                                          {child.is_stale && <IconClock size={14} color="orange" />}
-                                      </Group>
-                                      <Text size="sm" fw={700}>{child.real.toFixed(2)}h</Text>
-                                  </Group>
-                              ))}
-                          </Stack>
-                        </ScrollArea>
-                    </Stack>
-                    </>
-                )}
-
-                <Stack gap="sm" mt={c.is_parent ? 'auto' : 0}>
+                <Stack gap="sm" mt="auto">
                   <Stack gap={2}><Group justify="space-between"><Text size="sm" fw={700} c="dimmed">Progresso vs Esperado</Text><Text size="sm" fw={800}>{clamp(pctEsperado).toFixed(0)}%</Text></Group><Progress size="xl" radius="md" value={clamp(pctEsperado)} color={perfColor(pctEsperado)} striped animated={pctEsperado < 100} /></Stack>
                   <Stack gap={2}><Group justify="space-between"><Text size="sm" fw={700} c="dimmed">Progresso vs Meta</Text><Text size="sm" fw={800}>{clamp(c.pct_meta_dia ?? 0).toFixed(0)}%</Text></Group><Progress size="xl" radius="md" value={clamp(c.pct_meta_dia ?? 0)} color="blue" /></Stack>
                 </Stack>
@@ -773,5 +788,39 @@ function SlideMaquinas({ page, isFuture }: { page: CentroPerf[]; isFuture: boole
         })}
       </SimpleGrid>
     </Stack>
+  );
+}
+
+function SlideBranding() {
+  const [showCompany, setShowCompany] = useState(false);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setShowCompany(prev => !prev);
+    }, 1500);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <Center style={{ height: '100%', width: '100%', background: 'white', borderRadius: 16 }}>
+       <div style={{ width: '80%', height: '60%', position: 'relative', maxWidth: 800 }}>
+          <Transition mounted={!showCompany} transition="scale" duration={800} timingFunction="ease">
+            {(styles) => (
+                <div style={{ ...styles, position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                    <Image src="/logos/melhoria-continua.png" fit="contain" h={700} w="auto" fallbackSrc="https://placehold.co/800x600?text=Departamento" />
+                    <Text size="2rem" fw={900} mt="xl" c="dimmed" style={{ letterSpacing: 2 }}>A CADA DIA, UM POUCO MELHOR</Text>
+                </div>
+            )}
+          </Transition>
+
+          <Transition mounted={showCompany} transition="scale" duration={800} timingFunction="ease">
+            {(styles) => (
+                <div style={{ ...styles, position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Image src="/logos/spirax-sarco.png" fit="contain" h={700} w="auto" fallbackSrc="https://placehold.co/800x600?text=Spirax+Sarco" />
+                </div>
+            )}
+          </Transition>
+       </div>
+    </Center>
   );
 }
