@@ -1,7 +1,8 @@
-﻿import { useEffect, useMemo, useState } from 'react';
+﻿// src/features/dia/DashboardDia.tsx
+import { useEffect, useMemo, useState } from 'react';
 import { DateInput, TimeInput } from '@mantine/dates';
 import {
-  Card, Group, Text, SimpleGrid, Badge, Loader, Title, Grid, Progress,
+  Card, Group, Text, SimpleGrid, Badge, Loader, Title, Grid, Progress, SegmentedControl
 } from '@mantine/core';
 import { fracDiaLogico } from '../../utils/time';
 import {
@@ -22,6 +23,14 @@ type LinhaCentro = {
   esperado_h: number;
   aderencia_pct: number | null;
   desvio_h: number;
+  is_parent: boolean; 
+};
+
+// Extensão local para garantir acesso aos campos novos caso o type importado não esteja atualizado
+type CentroFull = CentroSmart & {
+    escopo?: string;
+    centro_pai_id?: number | null;
+    exibir_filhos?: boolean;
 };
 
 /* -------------------- Helpers -------------------- */
@@ -50,9 +59,9 @@ function parseLocalDateString(input: string | null | undefined): Date | null {
   m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (m) return new Date(+m[1], +m[2] - 1, +m[3]);
 
-  return null; // evita Date.parse por causa de TZ/UTC
+  return null; 
 }
-// compara datas pelo calendário local (ignora horas)
+
 function ymd(d: Date) { return [d.getFullYear(), d.getMonth(), d.getDate()] as const; }
 function isSameLocalDay(a: Date, b: Date) {
   const [ay, am, ad] = ymd(a); const [by, bm, bd] = ymd(b);
@@ -69,21 +78,12 @@ function isPastLocalDay(d: Date) {
   return day < td;
 }
 
-/** Centro ativo no dia do WIP?
- *  - Se ativo === false → inativo
- *  - Se desativado_desde !== null:
- *      * ativo SE dataWip < desativado_desde
- *      * inativo SE dataWip >= desativado_desde
- *  - Caso contrário, ativo.
- */
-function isCentroAtivoNoDia(c: CentroSmart, dataWip: Date): boolean {
+function isCentroAtivoNoDia(c: CentroFull, dataWip: Date): boolean {
   if (c.ativo === false) return false;
 
   if (c.desativado_desde) {
-    // formato 'YYYY-MM-DD'
     const d = parseLocalDateString(c.desativado_desde);
     if (d && !Number.isNaN(d.getTime())) {
-      // ativo até o dia anterior à desativação
       return dataWip.getTime() < new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
     }
   }
@@ -92,7 +92,6 @@ function isCentroAtivoNoDia(c: CentroSmart, dataWip: Date): boolean {
 
 /* -------------------- Página -------------------- */
 export default function DashboardDia() {
-  // Estado de data/hora
   const [hora, setHora] = useState<string>(() => {
     const d = new Date();
     const hh = String(d.getHours()).padStart(2, '0');
@@ -100,19 +99,17 @@ export default function DashboardDia() {
     return `${hh}:${mm}`;
   });
   const [dataWip, setDataWip] = useState<Date | null>(null);
+  const [scope, setScope] = useState<string>('usinagem');
 
-  // Dados
   const [metas, setMetas] = useState<VMetaAtual[] | null>(null);
-  const [centros, setCentros] = useState<CentroSmart[] | null>(null);
+  const [centros, setCentros] = useState<CentroFull[] | null>(null);
   const [totais, setTotais] = useState<VTtotalAtivo[] | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Flags de contexto
   const isPast = dataWip ? isPastLocalDay(dataWip) : false;
   const isToday = dataWip ? isSameLocalDay(dataWip, new Date()) : false;
   const isFuture = dataWip ? !isPast && !isToday : false;
 
-  // Ajusta hora para dias passados
   useEffect(() => {
     if (!dataWip || !isPast) return;
     if (hora === '00:44') return;
@@ -130,21 +127,18 @@ export default function DashboardDia() {
     setDataWip(normalized);
   };
 
-  // fração do dia para cálculo do "esperado até agora"
   const frac = isPast ? 1 : isFuture ? 0 : fracDiaLogico(hora);
 
-  // Carregar metas + centros (uma vez)
   useEffect(() => { (async () => {
     try {
       const [m, c] = await Promise.all([fetchMetasAtuais(), fetchCentrosSmart()]);
       setMetas(m);
-      setCentros(c);
+      setCentros(c as CentroFull[]);
     } catch (e) {
       console.error(e);
     }
   })(); }, []);
 
-  // Default: hoje
   useEffect(() => {
     if (dataWip) return;
     const now = new Date();
@@ -152,7 +146,6 @@ export default function DashboardDia() {
     setDataWip(todayLocal);
   }, [dataWip]);
 
-  // Buscar totais (por dia) quando a data muda
   useEffect(() => { (async () => {
     if (!dataWip) return;
     setLoading(true);
@@ -165,64 +158,113 @@ export default function DashboardDia() {
     } finally { setLoading(false); }
   })(); }, [dataWip?.getTime()]);
 
-  // Conjunto de centros ATIVOS no dia de referência
-  const ativosSet = useMemo(() => {
-    if (!centros || !dataWip) return null;
-    const set = new Set<number>();
-    for (const c of centros) {
-      if (isCentroAtivoNoDia(c, dataWip)) set.add(c.id);
-    }
-    return set;
-  }, [centros, dataWip?.getTime()]);
-
-  // Montar linhas dos centros (filtra INATIVOS no dia)
+  // Lógica Principal de Agregação e Filtragem
   const linhas: LinhaCentro[] = useMemo(() => {
-    if (!metas || !totais) return [];
-    // Se ainda não sabemos os centros ativos, mostramos nada (evita “piscada” com inativo)
-    if (!ativosSet) return [];
+    if (!metas || !totais || !centros || !dataWip) return [];
 
-    // horas produzidas por centro (totais retornam apenas ativos, mas garantimos)
+    const centrosMap = new Map<number, CentroFull>();
+    const parentToChildren = new Map<number, number[]>();
+
+    centros.forEach(c => {
+        centrosMap.set(c.id, c);
+        if (c.centro_pai_id) {
+            const list = parentToChildren.get(c.centro_pai_id) ?? [];
+            list.push(c.id);
+            parentToChildren.set(c.centro_pai_id, list);
+        }
+    });
+
     const prodById = new Map<number, number>();
-    for (const t of totais) {
-      prodById.set(t.centro_id, (prodById.get(t.centro_id) ?? 0) + Number(t.horas_somadas));
-    }
+    totais.forEach(t => prodById.set(t.centro_id, Number(t.horas_somadas)));
+
+    const metaById = new Map<number, number>();
+    metas.forEach(m => metaById.set(m.centro_id, Number(m.meta_horas)));
 
     const rows: LinhaCentro[] = [];
-    for (const m of metas) {
-      if (!ativosSet.has(m.centro_id)) continue; // 🔴 FILTRA INATIVOS
+    const processedIds = new Set<number>();
 
-      const metaDiaria = Number(m.meta_horas ?? 0);
-      const produzido = prodById.get(m.centro_id) ?? 0;
-      const esperado = +(metaDiaria * frac).toFixed(2);
+    const sortedCentros = [...centros].sort((a, b) => a.codigo.localeCompare(b.codigo));
 
-      let aderenciaPct: number | null = null;
-      if (!isFuture) {
-        if (esperado > 0) aderenciaPct = (produzido / esperado) * 100;
-        else if (isPast && metaDiaria > 0) aderenciaPct = (produzido / metaDiaria) * 100;
-        else aderenciaPct = 0;
-      }
+    for (const c of sortedCentros) {
+        if (processedIds.has(c.id)) continue;
+        if (!isCentroAtivoNoDia(c, dataWip)) continue;
 
-      rows.push({
-        centro_id: m.centro_id,
-        centro: m.centro,
-        produzido_h: +produzido.toFixed(2),
-        meta_h: +metaDiaria.toFixed(2),
-        esperado_h: esperado,
-        aderencia_pct: aderenciaPct !== null ? +aderenciaPct.toFixed(2) : null,
-        desvio_h: +(produzido - esperado).toFixed(2),
-      });
+        // Filtro de Escopo
+        const cScope = c.escopo || 'usinagem';
+        const matchesScope = scope === 'geral' || cScope === scope;
+        
+        // Hierarquia
+        const isParent = parentToChildren.has(c.id);
+        const parent = c.centro_pai_id ? centrosMap.get(c.centro_pai_id) : null;
+
+        let shouldShow = false;
+        if (isParent) {
+            if (matchesScope) shouldShow = true;
+        } else if (parent) {
+            if (parent.exibir_filhos) {
+                 const parentScope = parent.escopo || 'usinagem';
+                 const effectiveScope = matchesScope || (scope === parentScope);
+                 if (effectiveScope) shouldShow = true;
+            }
+        } else {
+            if (matchesScope) shouldShow = true;
+        }
+
+        if (!shouldShow) continue;
+
+        // Cálculo de Valores
+        let produzido = 0;
+        if (isParent) {
+            const children = parentToChildren.get(c.id) ?? [];
+            produzido = (prodById.get(c.id) ?? 0); 
+            children.forEach(childId => {
+                produzido += (prodById.get(childId) ?? 0);
+            });
+        } else {
+            produzido = prodById.get(c.id) ?? 0;
+        }
+
+        const meta = metaById.get(c.id) ?? 0;
+        const esperado = +(meta * frac).toFixed(2);
+        
+        let aderenciaPct: number | null = null;
+        if (!isFuture) {
+            if (esperado > 0) aderenciaPct = (produzido / esperado) * 100;
+            else if (isPast && meta > 0) aderenciaPct = (produzido / meta) * 100;
+            else aderenciaPct = 0;
+        }
+
+        rows.push({
+            centro_id: c.id,
+            centro: c.codigo,
+            produzido_h: +produzido.toFixed(2),
+            meta_h: +meta.toFixed(2),
+            esperado_h: esperado,
+            aderencia_pct: aderenciaPct !== null ? +aderenciaPct.toFixed(2) : null,
+            desvio_h: +(produzido - esperado).toFixed(2),
+            is_parent: isParent
+        });
+        
+        processedIds.add(c.id);
     }
 
-    // ordenação padrão: piores primeiro (menor aderência)
-    rows.sort((a, b) => (a.aderencia_pct ?? 0) - (b.aderencia_pct ?? 0));
-    return rows;
-  }, [metas, totais, frac, isFuture, isPast, ativosSet]);
+    return rows.sort((a, b) => (a.aderencia_pct ?? 0) - (b.aderencia_pct ?? 0));
+  }, [metas, totais, centros, frac, isFuture, isPast, dataWip, scope]);
 
-  // KPI fábrica + projeção EOD (end of day)
+  // KPI fábrica
   const fabrica = useMemo(() => {
-    const prod = linhas.reduce((s, r) => s + r.produzido_h, 0);
-    const meta = linhas.reduce((s, r) => s + r.meta_h, 0);
-    const esperado = linhas.reduce((s, r) => s + r.esperado_h, 0);
+    const parentIdsInList = new Set(linhas.filter(l => l.is_parent).map(l => l.centro_id));
+    const linhasParaSoma = linhas.filter(l => {
+        if (l.is_parent) return true;
+        if (!centros) return true;
+        const c = centros.find(x => x.id === l.centro_id);
+        if (c?.centro_pai_id && parentIdsInList.has(c.centro_pai_id)) return false;
+        return true;
+    });
+
+    const prod = linhasParaSoma.reduce((s, r) => s + r.produzido_h, 0);
+    const meta = linhasParaSoma.reduce((s, r) => s + r.meta_h, 0);
+    const esperado = linhasParaSoma.reduce((s, r) => s + r.esperado_h, 0);
 
     let aderenciaPct: number | null = null;
     if (!isFuture) {
@@ -231,8 +273,8 @@ export default function DashboardDia() {
       else aderenciaPct = 0;
     }
 
-    const projEod = frac > 0 ? prod / frac : 0;     // projeção até o fim do dia
-    const gapEod  = +(projEod - meta).toFixed(2);   // positivo = acima da meta
+    const projEod = frac > 0 ? prod / frac : 0;
+    const gapEod  = +(projEod - meta).toFixed(2);
 
     return {
       produzido_h: +prod.toFixed(2),
@@ -242,13 +284,23 @@ export default function DashboardDia() {
       projEod_h: +projEod.toFixed(2),
       gapEod_h: gapEod,
     };
-  }, [linhas, isFuture, isPast, frac]);
+  }, [linhas, isFuture, isPast, frac, centros]);
 
   return (
     <div>
-      <Title order={2} mb="sm">Visão do dia</Title>
+      <Group justify="space-between" align="center" mb="md">
+         <Title order={2}>Visão do dia</Title>
+         <SegmentedControl
+            value={scope}
+            onChange={setScope}
+            data={[
+                { label: 'Geral', value: 'geral' },
+                { label: 'Usinagem', value: 'usinagem' },
+                { label: 'Montagem', value: 'montagem' },
+            ]}
+         />
+      </Group>
 
-      {/* Filtros e KPIs de topo */}
       <Grid gutter="md" mb="lg">
         <Grid.Col span={{ base: 12, md: 6, lg: 4 }}>
           <DateInput
@@ -276,10 +328,11 @@ export default function DashboardDia() {
           />
         </Grid.Col>
 
+        {/* CARD DE TOTAL (LAYOUT RESTAURADO) */}
         <Grid.Col span={{ base: 12, md: 12, lg: 4 }}>
           <Card withBorder shadow="sm" radius="lg" padding="md">
             <Group justify="space-between" mb="xs">
-              <Text fw={600}>Fábrica</Text>
+              <Text fw={600}>Total {scope === 'geral' ? 'Fábrica' : scope === 'usinagem' ? 'Usinagem' : 'Montagem'}</Text>
               <Group gap="xs">
                 {isPast && <Badge variant="light" color="gray">Dia completo</Badge>}
                 {isFuture ? (
