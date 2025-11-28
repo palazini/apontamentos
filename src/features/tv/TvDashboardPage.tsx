@@ -539,9 +539,7 @@ export default function TvDashboardPage() {
         if (isSundayISO(iso)) continue; 
         const prod = +(historyAgregadoGlobal.get(iso) ?? 0).toFixed(2);
         const pct = metaTotalCards > 0 ? (prod / metaTotalCards) * 100 : 100;
-        const bateuMeta = metaTotalCards > 0 && prod >= metaTotalCards;
         // COR VERDE SE BATEU META, SENÃO AZUL/LARANJA
-        const color = bateuMeta ? '#16a34a' : (isSaturdayISO(iso) ? '#3b82f6' : '#f97316');
         serieFactory.push({ iso, label: shortBR(iso), produzido: prod, meta: metaTotalCards, pct, isSaturday: isSaturdayISO(iso) });
       }
 
