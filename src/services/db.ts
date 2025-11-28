@@ -19,6 +19,7 @@ export type Centro = {
   codigo: string;
   ativo: boolean;
   desativado_desde: string | null;
+  escopo: 'usinagem' | 'montagem';
 };
 export type Alias = {
    id: number;
@@ -42,7 +43,7 @@ export type CentroDia = {
   data_wip: string; 
   centro_id: number; 
   produzido_h: number; 
-  data_referencia?: string | null; // <--- NOVO
+  data_referencia?: string | null;
 };
 
 export type UploadHeader = {
@@ -146,16 +147,20 @@ export async function fetchUltimoDiaComDados(): Promise<string | null> {
 export async function fetchCentros(): Promise<Centro[]> {
   const { data, error } = await supabase
     .from('centros')
-    .select('id,codigo,ativo,desativado_desde')
+    .select('id,codigo,ativo,desativado_desde,escopo')
     .order('codigo', { ascending: true });
   if (error) throw error;
   return (data ?? []) as Centro[];
 }
 
-export async function createCentro(codigo: string): Promise<number> {
+export async function createCentro(codigo: string, escopo: 'usinagem' | 'montagem' = 'usinagem'): Promise<number> {
   const { data, error } = await supabase
     .from('centros')
-    .insert({ codigo: codigo.trim(), ativo: true })
+    .insert({ 
+        codigo: codigo.trim(), 
+        ativo: true,
+        escopo: escopo
+    })
     .select('id')
     .single();
   if (error) throw error;
@@ -359,24 +364,25 @@ export async function fetchUploadLinhasFuncionarios(dateISO: string, uploadId: n
 export type CentroSmart = {
   id: number;
   codigo: string;
-  ativo?: boolean;                  // legado
-  desativado_desde?: string | null; // novo (opcional)
+  ativo?: boolean;
+  desativado_desde?: string | null;
+  escopo?: 'usinagem' | 'montagem';
 };
 
 export async function fetchCentrosSmart(): Promise<CentroSmart[]> {
-  // tentamos buscar com 'desativado_desde'
-  const tryNew = await supabase.from('centros').select('id,codigo,desativado_desde,ativo').order('codigo', { ascending: true });
+  const tryNew = await supabase
+    .from('centros')
+    .select('id,codigo,desativado_desde,ativo,escopo') // <--- Add escopo
+    .order('codigo', { ascending: true });
+    
   if (!tryNew.error) return (tryNew.data ?? []) as CentroSmart[];
 
-  // fallback: coluna não existe → usa legado
+  // fallback legado (caso a coluna não exista, mas você já rodou o SQL)
   if (tryNew.error?.code === 'PGRST204') {
     const { data, error } = await supabase.from('centros').select('id,codigo,ativo').order('codigo', { ascending: true });
     if (error) throw error;
-    // mapeia adicionando desativado_desde = null
-    return (data ?? []).map((x: any) => ({ ...x, desativado_desde: null })) as CentroSmart[];
+    return (data ?? []).map((x: any) => ({ ...x, desativado_desde: null, escopo: 'usinagem' })) as CentroSmart[];
   }
-
-  // outro erro
   throw tryNew.error;
 }
 

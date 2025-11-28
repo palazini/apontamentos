@@ -7,13 +7,14 @@ import UploadDetalhePage from './features/upload/UploadDetalhePage';
 import ConfigGeralPage from './features/config/ConfigGeralPage';
 import RendimentoPage from './features/funcionario/RendFuncionarioPage';
 import FuncionariosMetaPage from './features/funcionarios/FuncionariosMetaPage';
-import TvDashboardPage from './features/tv/TvDashboardPage'; // ⬅ NOVO
+import TvDashboardPage from './features/tv/TvDashboardPage'; 
+import TvMenuPage from './features/tv/TvMenuPage'; // <--- IMPORTADO
 
 export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* Rotas normais com Layout (sidebar, header, etc.) */}
+        {/* Rotas administrativas com Layout */}
         <Route element={<Layout />}>
           <Route index element={<Navigate to="/dia" replace />} />
           <Route path="/upload" element={<UploadPage />} />
@@ -25,8 +26,9 @@ export default function App() {
           <Route path="/config" element={<ConfigGeralPage />} />
         </Route>
 
-        {/* Rota da TV em modo kiosk (sem Layout) */}
-        <Route path="/tv" element={<TvDashboardPage />} />
+        {/* Rotas TV */}
+        <Route path="/tv" element={<TvMenuPage />} /> {/* Menu Principal */}
+        <Route path="/tv/:scope" element={<TvDashboardPage />} /> {/* Painel com filtro (geral/usinagem/montagem) */}
       </Routes>
     </BrowserRouter>
   );

@@ -2,19 +2,26 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Card, Grid, Group, Title, Text, Button, Badge, Table, Stack,
-  TextInput, NumberInput, Select, Divider, ActionIcon, Tooltip, Switch, Loader
+  TextInput, NumberInput, Select, Divider, ActionIcon, Tooltip, Switch, Loader, SegmentedControl
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { supabase } from '../../lib/supabaseClient';
 import {
-  IconPlus, IconTrash, IconCheck, IconX,
+  IconPlus, IconTrash, IconCheck, IconX, IconEngine, IconBox
 } from '@tabler/icons-react';
 import { fetchAliases } from '../../services/db';
 
 /* =========================
    Tipos simples (espelham seu schema)
 ========================= */
-type Centro = { id: number; codigo: string; ativo: boolean; desativado_desde: string | null };
+type Centro = { 
+  id: number; 
+  codigo: string; 
+  ativo: boolean; 
+  desativado_desde: string | null;
+  escopo: 'usinagem' | 'montagem'; // <--- NOVO CAMPO
+};
+
 type Meta = { id: number; centro_id: number; meta_horas: number; vigente_desde: string; vigente_ate: string | null };
 type Alias = {
   id: number;
@@ -33,7 +40,7 @@ function isoToday(): string {
 
 export default function ConfigGeralPage() {
   /* =========================
-     Estado base / filtros
+      Estado base / filtros
   ========================= */
   const [loading, setLoading] = useState(true);
   const [centros, setCentros] = useState<Centro[]>([]);
@@ -45,10 +52,12 @@ export default function ConfigGeralPage() {
   const [centroSel, setCentroSel] = useState<string | null>(null);
 
   /* =========================
-     Formulários rápidos
+      Formulários rápidos
   ========================= */
   // Centros
   const [novoCentro, setNovoCentro] = useState('');
+  const [novoEscopo, setNovoEscopo] = useState<'usinagem' | 'montagem'>('usinagem'); // <--- NOVO STATE
+
   // Metas
   const [novaMeta, setNovaMeta] = useState<number | ''>('');
   const [vigenteDesde, setVigenteDesde] = useState<string>(isoToday());
@@ -58,73 +67,72 @@ export default function ConfigGeralPage() {
   const [centroAliasSel, setCentroAliasSel] = useState<string | null>(null);
 
   /* =========================
-     Loads
+      Loads
   ========================= */
   const loadAll = async () => {
-  setLoading(true);
-  try {
-    const [centrosRes, metasRes, aliasesRes] = await Promise.all([
-      supabase
-        .from('centros')
-        .select('id,codigo,ativo,desativado_desde')
-        .order('codigo', { ascending: true }),
-      supabase
-        .from('metas_diarias')
-        .select('id,centro_id,meta_horas,vigente_desde,vigente_ate')
-        .order('vigente_desde', { ascending: false }),
-      fetchAliases(), // <- já normalizado e tipado
-    ]);
+    setLoading(true);
+    try {
+      const [centrosRes, metasRes, aliasesRes] = await Promise.all([
+        supabase
+          .from('centros')
+          .select('id,codigo,ativo,desativado_desde,escopo') // <--- SELECT ESCOPO
+          .order('codigo', { ascending: true }),
+        supabase
+          .from('metas_diarias')
+          .select('id,centro_id,meta_horas,vigente_desde,vigente_ate')
+          .order('vigente_desde', { ascending: false }),
+        fetchAliases(),
+      ]);
 
-    if (centrosRes.error) throw centrosRes.error;
-    if (metasRes.error) throw metasRes.error;
+      if (centrosRes.error) throw centrosRes.error;
+      if (metasRes.error) throw metasRes.error;
 
-    // Normaliza centros
-    const centros: Centro[] = (centrosRes.data ?? []).map((r: any) => ({
-      id: Number(r.id),
-      codigo: String(r.codigo),
-      ativo: Boolean(r.ativo),
-      desativado_desde: r.desativado_desde ?? null,
-    }));
+      // Normaliza centros
+      const centros: Centro[] = (centrosRes.data ?? []).map((r: any) => ({
+        id: Number(r.id),
+        codigo: String(r.codigo),
+        ativo: Boolean(r.ativo),
+        desativado_desde: r.desativado_desde ?? null,
+        escopo: r.escopo === 'montagem' ? 'montagem' : 'usinagem', // Default safe
+      }));
 
-    // Normaliza metas
-    const metas: Meta[] = (metasRes.data ?? []).map((r: any) => ({
-      id: Number(r.id),
-      centro_id: Number(r.centro_id),
-      meta_horas: Number(r.meta_horas),
-      vigente_desde: r.vigente_desde,
-      vigente_ate: r.vigente_ate,
-    }));
+      // Normaliza metas
+      const metas: Meta[] = (metasRes.data ?? []).map((r: any) => ({
+        id: Number(r.id),
+        centro_id: Number(r.centro_id),
+        meta_horas: Number(r.meta_horas),
+        vigente_desde: r.vigente_desde,
+        vigente_ate: r.vigente_ate,
+      }));
 
-    setCentros(centros);
-    setMetas(metas);
-    setAliases(aliasesRes); // <- sem sombra
+      setCentros(centros);
+      setMetas(metas);
+      setAliases(aliasesRes); 
 
-    // defaults de seleção
-    if (!centroSel && centros.length) {
-      const firstActive = centros.find((x) => x.ativo) ?? centros[0];
-      setCentroSel(String(firstActive.id));
+      // defaults de seleção
+      if (!centroSel && centros.length) {
+        const firstActive = centros.find((x) => x.ativo) ?? centros[0];
+        setCentroSel(String(firstActive.id));
+      }
+      if (!centroAliasSel && centros.length) {
+        setCentroAliasSel(String(centros[0].id));
+      }
+    } catch (e: any) {
+      console.error(e);
+      notifications.show({
+        title: 'Erro ao carregar',
+        message: e.message ?? String(e),
+        color: 'red',
+      });
+    } finally {
+      setLoading(false);
     }
-    if (!centroAliasSel && centros.length) {
-      setCentroAliasSel(String(centros[0].id));
-    }
-  } catch (e: any) {
-    console.error(e);
-    notifications.show({
-      title: 'Erro ao carregar',
-      message: e.message ?? String(e),
-      color: 'red',
-    });
-  } finally {
-    setLoading(false);
-  }
-};
-
-
+  };
 
   useEffect(() => { loadAll(); /* eslint-disable-next-line */ }, []);
 
   /* =========================
-     Derivados
+      Derivados
   ========================= */
   const centrosFiltrados = useMemo(
     () => centros.filter((c) => mostrarInativos || c.ativo),
@@ -132,7 +140,7 @@ export default function ConfigGeralPage() {
   );
 
   const centroOptions = useMemo(
-    () => centros.map((c) => ({ value: String(c.id), label: c.codigo })),
+    () => centros.map((c) => ({ value: String(c.id), label: `${c.codigo} (${c.escopo === 'montagem' ? 'M' : 'U'})` })),
     [centros]
   );
 
@@ -147,12 +155,16 @@ export default function ConfigGeralPage() {
   }, [aliases, centroSel]);
 
   /* =========================
-     Ações: Centros
+      Ações: Centros
   ========================= */
   const criarCentro = async () => {
     const codigo = novoCentro.trim();
     if (!codigo) return;
-    const { error } = await supabase.from('centros').insert({ codigo, ativo: true });
+    const { error } = await supabase.from('centros').insert({ 
+        codigo, 
+        ativo: true,
+        escopo: novoEscopo // <--- INSERE COM ESCOPO
+    });
     if (error) {
       notifications.show({ title: 'Falha ao criar', message: error.message, color: 'red' });
       return;
@@ -160,6 +172,18 @@ export default function ConfigGeralPage() {
     setNovoCentro('');
     notifications.show({ title: 'Centro criado', message: codigo, color: 'green' });
     await loadAll();
+  };
+
+  const alterarEscopo = async (c: Centro, novoVal: string) => {
+    const val = novoVal === 'montagem' ? 'montagem' : 'usinagem';
+    const { error } = await supabase.from('centros').update({ escopo: val }).eq('id', c.id);
+    if (error) {
+      notifications.show({ title: 'Erro ao alterar escopo', message: error.message, color: 'red' });
+      return;
+    }
+    // Update otimista local ou reload
+    await loadAll();
+    notifications.show({ title: 'Escopo atualizado', message: `${c.codigo} agora é ${val}`, color: 'blue' });
   };
 
   const desativarCentro = async (c: Centro, data?: string) => {
@@ -190,7 +214,7 @@ export default function ConfigGeralPage() {
   };
 
   /* =========================
-     Ações: Metas
+      Ações: Metas
   ========================= */
   const criarMeta = async () => {
     const id = Number(centroSel);
@@ -206,7 +230,6 @@ export default function ConfigGeralPage() {
         .sort((a, b) => b.vigente_desde.localeCompare(a.vigente_desde))[0];
 
       if (aberta) {
-        // encerra no dia anterior à nova (simples e prático)
         const d = new Date(vigenteDesde);
         d.setDate(d.getDate() - 1);
         const y = d.getFullYear(), mo = String(d.getMonth() + 1).padStart(2, '0'), da = String(d.getDate()).padStart(2, '0');
@@ -249,7 +272,7 @@ export default function ConfigGeralPage() {
   };
 
   /* =========================
-     Ações: Aliases
+      Ações: Aliases
   ========================= */
   const criarAlias = async () => {
     const alias = novoAlias.trim();
@@ -279,7 +302,7 @@ export default function ConfigGeralPage() {
   };
 
   /* =========================
-     Render
+      Render
   ========================= */
   return (
     <div>
@@ -299,26 +322,38 @@ export default function ConfigGeralPage() {
       ) : (
         <Grid gutter="lg">
           {/* ===================== Coluna 1: Centros ===================== */}
-          <Grid.Col span={{ base: 12, md: 4 }}>
+          <Grid.Col span={{ base: 12, md: 5 }}> {/* Aumentei um pouco a coluna 1 para caber o escopo */}
             <Card withBorder shadow="sm" radius="lg" p="lg">
               <Group justify="space-between" mb="sm">
-                <Title order={4} m={0}>Centros</Title>
+                <Title order={4} m={0}>Centros de Trabalho</Title>
               </Group>
 
               <Stack gap="xs" mb="md">
-                <Group align="end" grow>
-                  <TextInput
-                    label="Novo centro"
-                    placeholder="Ex.: Pintura"
-                    value={novoCentro}
-                    onChange={(e) => setNovoCentro(e.currentTarget.value)}
-                  />
-                  <Button leftSection={<IconPlus size={16} />} onClick={criarCentro}>
-                    Adicionar
-                  </Button>
+                <Group grow>
+                    <TextInput
+                        placeholder="Nome/Código (Ex: TORNO-01)"
+                        value={novoCentro}
+                        onChange={(e) => setNovoCentro(e.currentTarget.value)}
+                    />
+                     <Button leftSection={<IconPlus size={16} />} onClick={criarCentro}>
+                        Criar
+                     </Button>
                 </Group>
+                
+                {/* Seletor de Escopo na Criação */}
+                <SegmentedControl 
+                    value={novoEscopo}
+                    onChange={(val: any) => setNovoEscopo(val)}
+                    data={[
+                        { label: 'Usinagem', value: 'usinagem' },
+                        { label: 'Montagem', value: 'montagem' }
+                    ]}
+                    size="xs"
+                    fullWidth
+                />
+                
                 <Text size="xs" c="dimmed">
-                  Dica: ao desativar um centro, os dados antigos permanecem; os próximos cálculos param de considerá-lo.
+                  Defina se a máquina pertence à Usinagem ou Montagem. Isso afeta em qual painel de TV ela aparecerá.
                 </Text>
               </Stack>
 
@@ -329,9 +364,9 @@ export default function ConfigGeralPage() {
                   <Table.Tr>
                     <Table.Th style={{ width: 28 }}></Table.Th>
                     <Table.Th>Código</Table.Th>
+                    <Table.Th>Escopo</Table.Th>
                     <Table.Th>Status</Table.Th>
-                    <Table.Th>Desativado desde</Table.Th>
-                    <Table.Th style={{ width: 160 }}>Ações</Table.Th>
+                    <Table.Th style={{ width: 100 }}>Ações</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
@@ -344,33 +379,43 @@ export default function ConfigGeralPage() {
                           checked={String(c.id) === centroSel}
                           onChange={() => setCentroSel(String(c.id))}
                           style={{ cursor: 'pointer' }}
-                          title="Selecionar para ver metas e aliases"
+                          title="Selecionar"
                         />
                       </Table.Td>
-                      <Table.Td>{c.codigo}</Table.Td>
                       <Table.Td>
-                        {c.ativo ? <Badge color="green">Ativo</Badge> : <Badge color="gray">Inativo</Badge>}
+                          <Text fw={500}>{c.codigo}</Text>
                       </Table.Td>
-                      <Table.Td>{c.desativado_desde ?? '-'}</Table.Td>
                       <Table.Td>
-                        <Group gap="xs">
+                         {/* Editor rápido de Escopo na Tabela */}
+                         <Select 
+                            variant="unstyled"
+                            size="xs"
+                            value={c.escopo}
+                            onChange={(val) => val && alterarEscopo(c, val)}
+                            data={[
+                                { value: 'usinagem', label: 'Usinagem' },
+                                { value: 'montagem', label: 'Montagem' }
+                            ]}
+                            allowDeselect={false}
+                            styles={{ input: { height: 24, minHeight: 24, fontSize: 12, fontWeight: 600, color: c.escopo === 'usinagem' ? '#228be6' : '#be4bdb' } }}
+                         />
+                      </Table.Td>
+                      <Table.Td>
+                        {c.ativo ? <Badge size="sm" color="green" variant="dot">Ativo</Badge> : <Badge size="sm" color="gray">Inativo</Badge>}
+                      </Table.Td>
+                      <Table.Td>
+                        <Group gap={4}>
                           {c.ativo ? (
-                            <Tooltip label="Desativar a partir de hoje">
-                              <Button size="xs" variant="light" color="yellow"
-                                leftSection={<IconX size={14} />}
-                                onClick={() => desativarCentro(c)}
-                              >
-                                Desativar
-                              </Button>
+                            <Tooltip label="Desativar">
+                              <ActionIcon size="sm" variant="subtle" color="yellow" onClick={() => desativarCentro(c)}>
+                                 <IconX size={16} />
+                              </ActionIcon>
                             </Tooltip>
                           ) : (
-                            <Tooltip label="Reativar centro">
-                              <Button size="xs" variant="light" color="green"
-                                leftSection={<IconCheck size={14} />}
-                                onClick={() => reativarCentro(c)}
-                              >
-                                Ativar
-                              </Button>
+                            <Tooltip label="Reativar">
+                              <ActionIcon size="sm" variant="subtle" color="green" onClick={() => reativarCentro(c)}>
+                                 <IconCheck size={16} />
+                              </ActionIcon>
                             </Tooltip>
                           )}
                         </Group>
@@ -395,8 +440,9 @@ export default function ConfigGeralPage() {
                   onChange={setCentroSel}
                   data={centroOptions}
                   searchable
-                  placeholder="Selecionar centro"
-                  miw={220}
+                  placeholder="Selecione..."
+                  miw={180}
+                  size="xs"
                 />
               </Group>
 
@@ -423,10 +469,10 @@ export default function ConfigGeralPage() {
                   <Switch
                     checked={encerrarAnterior}
                     onChange={(e) => setEncerrarAnterior(e.currentTarget.checked)}
-                    label="Encerrar automaticamente a meta anterior (dia anterior)"
+                    label={<Text size="xs">Encerrar anterior</Text>}
                   />
-                  <Button leftSection={<IconPlus size={16} />} onClick={criarMeta}>
-                    Adicionar meta
+                  <Button size="xs" leftSection={<IconPlus size={14} />} onClick={criarMeta}>
+                    Adicionar
                   </Button>
                 </Group>
               </Stack>
@@ -439,7 +485,7 @@ export default function ConfigGeralPage() {
                     <Table.Th>Meta (h)</Table.Th>
                     <Table.Th>Desde</Table.Th>
                     <Table.Th>Até</Table.Th>
-                    <Table.Th style={{ width: 120 }}>Ações</Table.Th>
+                    <Table.Th style={{ width: 50 }}></Table.Th>
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
@@ -447,12 +493,12 @@ export default function ConfigGeralPage() {
                     <Table.Tr key={m.id}>
                       <Table.Td>{(+m.meta_horas).toFixed(2)}</Table.Td>
                       <Table.Td>{m.vigente_desde}</Table.Td>
-                      <Table.Td>{m.vigente_ate ?? <Badge variant="light" color="green">Vigente</Badge>}</Table.Td>
+                      <Table.Td>{m.vigente_ate ?? <Badge size="xs" variant="light" color="green">Atual</Badge>}</Table.Td>
                       <Table.Td>
                         {!m.vigente_ate && (
                           <Tooltip label="Encerrar hoje">
-                            <ActionIcon variant="light" color="yellow" onClick={() => encerrarMeta(m)}>
-                              <IconX size={16} />
+                            <ActionIcon size="sm" variant="light" color="yellow" onClick={() => encerrarMeta(m)}>
+                              <IconX size={14} />
                             </ActionIcon>
                           </Tooltip>
                         )}
@@ -460,7 +506,7 @@ export default function ConfigGeralPage() {
                     </Table.Tr>
                   ))}
                   {metasDoCentroSel.length === 0 && (
-                    <Table.Tr><Table.Td colSpan={4}>Sem metas para este centro.</Table.Td></Table.Tr>
+                    <Table.Tr><Table.Td colSpan={4}>Sem metas.</Table.Td></Table.Tr>
                   )}
                 </Table.Tbody>
               </Table>
@@ -468,87 +514,54 @@ export default function ConfigGeralPage() {
           </Grid.Col>
 
           {/* ===================== Coluna 3: Aliases (mapeamentos) ===================== */}
-          <Grid.Col span={{ base: 12, md: 4 }}>
+          <Grid.Col span={{ base: 12, md: 3 }}>
             <Card withBorder shadow="sm" radius="lg" p="lg">
               <Group justify="space-between" mb="sm">
-                <Title order={4} m={0}>Mapeamentos (Aliases)</Title>
+                <Title order={4} m={0}>Aliases</Title>
               </Group>
 
               <Stack gap="xs" mb="md">
-                <Group grow align="end">
                   <TextInput
-                    label="Novo alias"
+                    label="Novo alias (Excel)"
                     placeholder='Ex.: CE-PINT'
                     value={novoAlias}
                     onChange={(e) => setNovoAlias(e.currentTarget.value)}
                   />
                   <Select
-                    label="Centro destino"
+                    label="Vincula ao centro"
                     value={centroAliasSel}
                     onChange={setCentroAliasSel}
                     data={centroOptions}
                     searchable
                   />
-                  <Button leftSection={<IconPlus size={16} />} onClick={criarAlias}>
-                    Adicionar
+                  <Button fullWidth leftSection={<IconPlus size={16} />} onClick={criarAlias}>
+                    Vincular
                   </Button>
-                </Group>
-                <Text size="xs" c="dimmed">
-                  Observação: aliases duplicados são ignorados; remova se estiver errado.
-                </Text>
               </Stack>
 
               <Divider my="sm" />
 
-              <Title order={6} mb="xs">Aliases do centro selecionado</Title>
+              <Title order={6} mb="xs">Deste centro</Title>
               <Table highlightOnHover withTableBorder stickyHeader>
                 <Table.Thead>
                   <Table.Tr>
                     <Table.Th>Alias</Table.Th>
-                    <Table.Th style={{ width: 120 }}>Ações</Table.Th>
+                    <Table.Th style={{ width: 50 }}></Table.Th>
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
                   {aliasesDoCentroSel.map((a) => (
                     <Table.Tr key={a.id}>
-                      <Table.Td>{a.alias_texto}</Table.Td>
+                      <Table.Td style={{ wordBreak: 'break-all', fontSize: 13 }}>{a.alias_texto}</Table.Td>
                       <Table.Td>
-                        <ActionIcon variant="light" color="red" onClick={() => removerAlias(a.id)} title="Remover">
-                          <IconTrash size={16} />
+                        <ActionIcon size="sm" variant="light" color="red" onClick={() => removerAlias(a.id)}>
+                          <IconTrash size={14} />
                         </ActionIcon>
                       </Table.Td>
                     </Table.Tr>
                   ))}
                   {aliasesDoCentroSel.length === 0 && (
-                    <Table.Tr><Table.Td colSpan={2}>Nenhum alias para este centro.</Table.Td></Table.Tr>
-                  )}
-                </Table.Tbody>
-              </Table>
-
-              <Divider my="md" />
-              <Title order={6} mb="xs">Todos os aliases</Title>
-              <Table highlightOnHover withTableBorder>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>Alias</Table.Th>
-                    <Table.Th>Centro</Table.Th>
-                    <Table.Th style={{ width: 80 }}></Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {aliases.map((a) => (
-                    <Table.Tr key={a.id}>
-                      <Table.Td>{a.alias_texto}</Table.Td>
-                      <Table.Td>{a.centro?.codigo ?? '-'}</Table.Td>
-                      <Table.Td>
-                        <ActionIcon variant="light" color="red" onClick={() => removerAlias(a.id)} title="Remover">
-                          <IconTrash size={16} />
-                        </ActionIcon>
-                      </Table.Td>
-                    </Table.Tr>
-                  ))}
-                  {aliases.length === 0 && (
-                    <Table.Tr><Table.Td colSpan={3}>Nenhum mapeamento cadastrado.</Table.Td></Table.Tr>
+                    <Table.Tr><Table.Td colSpan={2}><Text c="dimmed" size="xs">Vazio</Text></Table.Td></Table.Tr>
                   )}
                 </Table.Tbody>
               </Table>
