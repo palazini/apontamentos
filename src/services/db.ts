@@ -110,9 +110,11 @@ export type AvisoTV = {
   mensagem: string;
   tipo: 'info' | 'alerta' | 'sucesso' | 'aviso';
   escopo: 'geral' | 'usinagem' | 'montagem';
-  exibir_como: 'ticker' | 'slide';
+  exibir_como: 'ticker' | 'slide' | 'apresentacao';
   valido_de: string;
   valido_ate: string;
+  arquivo_url?: string | null;
+  pagina_atual?: number | null;
   ativo: boolean;
 };
 

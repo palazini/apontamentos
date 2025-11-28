@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import './utils/pdfConfig';
 
 // Mantine (só styles base via CSS por enquanto)
 import '@mantine/core/styles.css';

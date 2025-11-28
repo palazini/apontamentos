@@ -8,8 +8,11 @@ import {
 } from 'recharts';
 import {
   IconChevronLeft, IconChevronRight, IconMaximize, IconMinimize, IconTrendingUp, IconClock, IconAlertTriangle, IconArrowLeft, IconArrowMerge, IconPin,
-  IconInfoCircle, IconCheck, IconSpeakerphone 
+  IconInfoCircle, IconCheck, IconSpeakerphone, IconX // <--- NOVO ÍCONE IMPORTADO
 } from '@tabler/icons-react';
+import { Document, Page } from 'react-pdf';
+import 'react-pdf/dist/Page/AnnotationLayer.css';
+import 'react-pdf/dist/Page/TextLayer.css';
 
 import {
   fetchMetasAtuais, fetchCentroSeriesRange, fetchUltimoDiaComDados, fetchUploadsPorDia, fetchAvisosAtivos,
@@ -29,7 +32,7 @@ function getNow() {
 }
 
 function startOfDayLocal(d: Date) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
-function toISO(d: Date) { return d.toISOString().split('T')[0]; } // Simplificado
+function toISO(d: Date) { return d.toISOString().split('T')[0]; }
 function isoToLocalDate(iso: string) { const parts = iso.split('-'); return new Date(+parts[0], +parts[1]-1, +parts[2]); }
 function addDays(d: Date, delta: number) { const nd = new Date(d); nd.setDate(d.getDate() + delta); return startOfDayLocal(nd); }
 
@@ -159,14 +162,15 @@ export default function TvDashboardPage() {
   // Avisos e Slides
   const [avisos, setAvisos] = useState<AvisoTV[]>([]);
   const [activeSlide, setActiveSlide] = useState(0);
-  // NOVOS CONTROLES
-  const [overrideTimer, setOverrideTimer] = useState<number | null>(null); // Controla os 20s
-  const seenAvisosRef = useRef<Set<number>>(new Set()); // Histórico de avisos vistos nesta sessão
+  const [overrideTimer, setOverrideTimer] = useState<number | null>(null);
+  const seenAvisosRef = useRef<Set<number>>(new Set());
   const cancelledRef = useRef(false);
 
-  // Memos de Avisos
+  // NOVO STATE PARA MODO APRESENTAÇÃO
+  const [isPresentationMode, setIsPresentationMode] = useState(false);
+
   const tickerAvisos = useMemo(() => avisos.filter(a => a.exibir_como === 'ticker'), [avisos]);
-  const slideAvisos = useMemo(() => avisos.filter(a => a.exibir_como === 'slide'), [avisos]);
+  const slideAvisos = useMemo(() => avisos.filter(a => a.exibir_como === 'slide' || a.exibir_como === 'apresentacao'), [avisos]);
 
   const tituloPainel = useMemo(() => {
     if (scope === 'montagem') return 'Painel de Montagem';
@@ -190,18 +194,14 @@ export default function TvDashboardPage() {
     cancelledRef.current = false;
     try {
       setLoading(true);
-
-      // 1. Avisos
       const avisosAtivos = await fetchAvisosAtivos(scope || 'geral');
       if (!cancelledRef.current) setAvisos(avisosAtivos);
 
-      // 2. Data Referência
       const lastDayIso = await fetchUltimoDiaComDados();
       if (!lastDayIso) {
         if (!cancelledRef.current) { setFactoryDays([]); setCentrosPerf([]); setLastUpdateText('Sem dados'); }
         return;
       }
-
       const diaRefLocal = startOfDayLocal(isoToLocalDate(lastDayIso));
       const uploadsDia = await fetchUploadsPorDia(lastDayIso);
       let ativo = uploadsDia.find((u) => u.ativo) ?? uploadsDia.slice().sort((a, b) => new Date(a.enviado_em).getTime() - new Date(b.enviado_em).getTime()).at(-1) ?? null;
@@ -216,9 +216,7 @@ export default function TvDashboardPage() {
         const horaStr = dt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
         horaRefGlobal = horaStr;
         if (!cancelledRef.current) setLastUpdateText(`${dataStr} • ${horaStr}`);
-      } else if (!cancelledRef.current) {
-        setLastUpdateText('Sem dados');
-      }
+      } else if (!cancelledRef.current) setLastUpdateText('Sem dados');
 
       const todayLocal = startOfDayLocal(getNow());
       const isPast = diaRefLocal < todayLocal;
@@ -228,7 +226,6 @@ export default function TvDashboardPage() {
 
       if (!cancelledRef.current) setContextDia({ isPast, isToday, isFuture, frac: fracGlobal });
 
-      // 3. Centros e Métricas
       const startMes = new Date(diaRefLocal.getFullYear(), diaRefLocal.getMonth(), 1);
       const diasCorridosMes = countDaysExcludingSundays(startMes, diaRefLocal);
       const startSerie = addDays(diaRefLocal, -13);
@@ -239,19 +236,15 @@ export default function TvDashboardPage() {
 
       const centrosMap = new Map<number, any>();
       centrosAll.forEach(c => centrosMap.set(c.id, c));
-
       const idsParaBuscarDados = new Set<number>();
       const idsCards = new Set<number>();
       const parentToChildren = new Map<number, number[]>();
 
-      // Lógica de Hierarquia e Filtro de Escopo
       centrosAll.forEach((c) => {
          let belongsToScope = false;
          if (!scope || scope === 'geral') belongsToScope = true;
          else if (c.escopo === scope) belongsToScope = true;
-         
          const pai = c.centro_pai_id ? centrosMap.get(c.centro_pai_id) : null;
-         
          if (isCentroAtivoNoDia(c, diaRefLocal)) {
              if (pai) {
                  const parentInScope = !scope || scope === 'geral' || pai.escopo === scope;
@@ -263,12 +256,7 @@ export default function TvDashboardPage() {
                      parentToChildren.set(pai.id, list);
                      if (pai.exibir_filhos && parentInScope) idsCards.add(c.id);
                  }
-             } else {
-                 if (belongsToScope) {
-                     idsParaBuscarDados.add(c.id);
-                     idsCards.add(c.id);
-                 }
-             }
+             } else if (belongsToScope) { idsParaBuscarDados.add(c.id); idsCards.add(c.id); }
          }
       });
 
@@ -279,7 +267,6 @@ export default function TvDashboardPage() {
           );
       }
 
-      // Cálculo de Performance
       const perfCalculada: CentroPerf[] = [];
       const cardIdsArr = Array.from(idsCards);
       const metasMap = new Map<number, number>();
@@ -289,12 +276,10 @@ export default function TvDashboardPage() {
       cardIdsArr.forEach(cardId => {
           const centroCard = centrosMap.get(cardId);
           if (!centroCard) return;
-
           const isParent = parentToChildren.has(cardId);
           const hasParent = !!centroCard.centro_pai_id;
           const isPinned = !!centroCard.exibir_filhos && isParent && (scope === centroCard.escopo);
           const childrenIds = parentToChildren.get(cardId) ?? [cardId];
-
           const metaDia = metasMap.get(cardId) ?? 0;
           const metaMes = metaDia * diasCorridosMes;
           let realDia = 0, realMes = 0;
@@ -305,7 +290,6 @@ export default function TvDashboardPage() {
           childrenIds.forEach(childId => {
                const childCode = centrosMap.get(childId)?.codigo ?? '?';
                let childRealDia = 0, childLastRef = horaRefGlobal, childIsStale = false;
-               
                const hist = fullHistory.filter(h => h.centro_id === childId);
                hist.forEach(h => {
                    const val = Number(h.produzido_h) || 0;
@@ -328,7 +312,6 @@ export default function TvDashboardPage() {
                if (isParent) contribuintesList.push({ codigo: childCode, real: childRealDia, is_stale: childIsStale, last_ref: childLastRef });
           });
 
-          // Check stale status for standalone
           if (!isParent && !isFuture && !isPast) {
              const histHoje = fullHistory.find(h => h.centro_id === cardId && h.data_wip === toISO(diaRefLocal));
              if (histHoje?.data_referencia) {
@@ -340,7 +323,6 @@ export default function TvDashboardPage() {
 
           let fracAplicada = fracGlobal;
           if (!isParent && cardIsStale) fracAplicada = fracDiaLogico(lastRefStr);
-          
           const esperado = +(metaDia * fracAplicada).toFixed(2);
           let aderDia: number | null = null;
           if (!isFuture) {
@@ -361,7 +343,6 @@ export default function TvDashboardPage() {
           });
       });
 
-      // Série Fábrica
       const metaTotalCards = perfCalculada.filter(c => c.is_parent || !c.has_parent).reduce((acc, c) => acc + c.meta_dia, 0);
       const dias = daysBetween(startSerie, diaRefLocal);
       const serieFactory: FactoryDayRow[] = [];
@@ -372,18 +353,14 @@ export default function TvDashboardPage() {
         serieFactory.push({ iso, label: shortBR(iso), produzido: prod, meta: metaTotalCards, pct, isSaturday: isSaturdayISO(iso) });
       }
 
-      if (!cancelledRef.current) {
-         setFactoryDays(serieFactory);
-         setCentrosPerf(perfCalculada);
-      }
+      if (!cancelledRef.current) { setFactoryDays(serieFactory); setCentrosPerf(perfCalculada); }
     } catch (e) { console.error(e); } finally { if (!cancelledRef.current) setLoading(false); }
   }, [scope]);
 
   useEffect(() => { cancelledRef.current = false; loadData(); return () => { cancelledRef.current = true; }; }, [loadData]);
   useEffect(() => { const ch = supabase.channel('tv-realtime').on('postgres_changes', { event: '*', schema: 'public' }, () => loadData()).subscribe(); return () => { supabase.removeChannel(ch); }; }, [loadData]);
-  useEffect(() => { const id = window.setInterval(loadData, 600000); return () => window.clearInterval(id); }, [loadData]);
+  useEffect(() => { const id = window.setInterval(loadData, 60000); return () => window.clearInterval(id); }, [loadData]);
 
-  // Resumo Header
   const resumo = useMemo(() => {
     if (!centrosPerf.length) return { metaMes: 0, realMes: 0, metaDia: 0, realDia: 0, esperadoDia: 0 };
     const lideres = centrosPerf.filter(c => c.is_parent || !c.has_parent);
@@ -393,7 +370,6 @@ export default function TvDashboardPage() {
     }, { metaMes: 0, realMes: 0, metaDia: 0, realDia: 0, esperadoDia: 0 });
   }, [centrosPerf]);
 
-  // Paginação de Máquinas
   const centroPages = useMemo(() => {
       const pinnedItems = centrosPerf.filter(c => c.pinned);
       const regularItems = centrosPerf.filter(c => !c.pinned).sort((a, b) => (b.ader_dia ?? -Infinity) - (a.ader_dia ?? -Infinity));
@@ -412,130 +388,235 @@ export default function TvDashboardPage() {
   const countBranding = 1;
   const totalSlides = countFactory + countMaquinas + countAvisos + countBranding;
 
-  // --- DETECÇÃO DE NOVO ALERTA (Interrupção) ---
+  // 1. SEGURAN?A: Se o n?mero de slides diminuir (ex: removeu aviso) e estourar o ?ndice, volta pro zero
   useEffect(() => {
-    // Procura o primeiro aviso do tipo slide que ainda não foi visto
-    const novoAviso = slideAvisos.find(a => !seenAvisosRef.current.has(a.id));
-
-    if (novoAviso) {
-      // 1. Marca como visto para não interromper de novo futuramente
-      seenAvisosRef.current.add(novoAviso.id);
-
-      // 2. Calcula onde ele está no carrossel
-      const indexNoArrayAvisos = slideAvisos.indexOf(novoAviso);
-      const absoluteIndex = countFactory + countMaquinas + indexNoArrayAvisos;
-
-      // 3. Pula imediatamente para ele
-      setActiveSlide(absoluteIndex);
-
-      // 4. Define tempo especial de 20s (20000ms)
-      setOverrideTimer(20000);
+    if (totalSlides > 0 && activeSlide >= totalSlides) {
+      setActiveSlide(0);
+      setOverrideTimer(null); // Reseta timer se perdeu a refer?ncia
     }
-  }, [slideAvisos, countFactory, countMaquinas]);
+  }, [totalSlides, activeSlide]);
 
-  // --- ROTAÇÃO AUTOMÁTICA ---
+  // 2. DETEC??O DE NOVO ALERTA (Interrup??o)
+  useEffect(() => {
+    // Procura um aviso slide/apresenta??o que ainda n?o foi visto nesta sess?o
+    const novoAviso = avisos.find(a => !seenAvisosRef.current.has(a.id) && (a.exibir_como === 'slide' || a.exibir_como === 'apresentacao'));
+    
+    if (novoAviso) {
+      seenAvisosRef.current.add(novoAviso.id);
+      
+      const slideIndex = slideAvisos.findIndex(a => a.id === novoAviso.id);
+      if (slideIndex >= 0) {
+          const absoluteIndex = countFactory + countMaquinas + slideIndex;
+          
+          setActiveSlide(absoluteIndex);
+          
+          // Define timer: 1 hora para apresenta??o, 20s para avisos comuns
+          const tempo = novoAviso.exibir_como === 'apresentacao' ? 3600000 : 20000;
+          setOverrideTimer(tempo);
+          
+          // Se for apresenta??o, j? ativa o modo
+          if (novoAviso.exibir_como === 'apresentacao') {
+             setIsPresentationMode(true);
+          }
+      }
+    }
+  }, [avisos, slideAvisos, countFactory, countMaquinas]);
+
+  // 3. SINCRONIA DE ESTADO (Corrige o bug do timer travado)
+  // Verifica o que est? sendo exibido AGORA e ajusta o modo/timer
+  useEffect(() => {
+    if (totalSlides === 0) return;
+
+    // Calcula qual aviso est? na tela agora (se houver)
+    const avisoIndex = activeSlide - countFactory - countMaquinas;
+    const isAvisoSlide = avisoIndex >= 0 && avisoIndex < countAvisos;
+    const avisoAtual = isAvisoSlide ? slideAvisos[avisoIndex] : null;
+
+    // Verifica se ? uma apresenta??o v?lida
+    const isShowingPresentation = avisoAtual?.exibir_como === 'apresentacao' && !!avisoAtual.arquivo_url;
+
+    if (isShowingPresentation) {
+      // Se ? apresenta??o mas o modo t? desligado, Liga.
+      if (!isPresentationMode) setIsPresentationMode(true);
+    } else {
+      // Se N?O ? apresenta??o (ex: foi removido ou mudou o slide), mas o modo t? ligado OU o timer t? gigante
+      if (isPresentationMode || (overrideTimer && overrideTimer > 20000)) {
+         setIsPresentationMode(false);
+         setOverrideTimer(null); // <--- AQUI EST? A CORRE??O: Mata o timer de 1 hora
+      }
+    }
+  }, [activeSlide, totalSlides, countFactory, countMaquinas, countAvisos, slideAvisos, isPresentationMode, overrideTimer]);
+
+  // 4. ROTA??O AUTOM?TICA (Carrossel)
   useEffect(() => {
     if (totalSlides <= 1) return;
 
-    // Lógica padrão de tempo
-    const isBranding = activeSlide === totalSlides - 1;
-    const avisoIndex = activeSlide - countFactory - countMaquinas;
-    const isAviso = avisoIndex >= 0 && avisoIndex < countAvisos;
+    // Se estiver em modo apresenta??o (timer longo), n?o roda o carrossel padr?o curto
+    // A dura??o vem do overrideTimer ou do padr?o
+    let duration = 12000; // Padr?o
 
-    let duration = 15000; // Padrão Máquinas
-    
     if (overrideTimer) {
-       // Se tiver um override (acabou de chegar alerta novo), usa ele
        duration = overrideTimer;
     } else {
-       // Tempos normais do ciclo
+       // L?gica padr?o sem override
+       const isBranding = activeSlide === totalSlides - 1;
+       const avisoIndex = activeSlide - countFactory - countMaquinas;
+       const isAviso = avisoIndex >= 0 && avisoIndex < countAvisos;
+       
        if (isBranding) duration = 3000; 
-       if (isAviso) duration = 15000; // Alerta no ciclo normal dura 10s
+       if (isAviso) duration = 10000; 
     }
 
     const id = window.setTimeout(() => { 
-        // Se tinha override, limpa ele para o próximo slide ser normal
+        // Ao virar o slide, limpamos o override (a menos que seja apresenta??o, mas a? o useEffect 3 trata)
         if (overrideTimer) setOverrideTimer(null);
-        
         setActiveSlide((prev) => (prev + 1) % totalSlides); 
     }, duration);
 
     return () => window.clearTimeout(id);
   }, [totalSlides, activeSlide, countFactory, countMaquinas, countAvisos, overrideTimer]);
 
-  useEffect(() => { setActiveSlide(0); }, [scope, centroPages.length]); // Reseta se mudar paginação
+  useEffect(() => { setActiveSlide(0); }, [scope, centroPages.length]);
 
-  const goPrev = () => setActiveSlide((prev) => (prev - 1 + totalSlides) % totalSlides);
-  const goNext = () => setActiveSlide((prev) => (prev + 1) % totalSlides);
+  const goPrev = useCallback(() => setActiveSlide((prev) => (prev - 1 + totalSlides) % totalSlides), [totalSlides]);
+  const goNext = useCallback(() => setActiveSlide((prev) => (prev + 1) % totalSlides), [totalSlides]);
+
+  // Função para sair manualmente da apresentação
+  const handleExitPresentation = useCallback(() => {
+      setIsPresentationMode(false);
+      setOverrideTimer(null);
+      goNext();
+  }, [goNext]);
+
+  // Efeito para entrar/sair do Fullscreen real
+  useEffect(() => {
+    if (isPresentationMode && rootRef.current && !document.fullscreenElement) {
+        rootRef.current.requestFullscreen().catch(err => console.log("Fullscreen negado:", err));
+    }
+  }, [isPresentationMode]);
 
   // --- RENDERIZAÇÃO DO CONTEÚDO ---
   let slideContent = null;
   let slideTitle = "";
 
   if (activeSlide === 0) {
+      if (isPresentationMode) setIsPresentationMode(false);
       slideTitle = "Visão Geral";
       slideContent = <SlideFactory dias={factoryDays} />;
   } else if (activeSlide > 0 && activeSlide <= countMaquinas) {
+      if (isPresentationMode) setIsPresentationMode(false);
       const pageIndex = activeSlide - 1;
       slideTitle = `Máquinas - Pág ${pageIndex + 1} de ${countMaquinas}`;
       slideContent = <SlideMaquinas page={centroPages[pageIndex] ?? []} isFuture={contextDia.isFuture} />;
   } else if (activeSlide > countMaquinas && activeSlide <= countMaquinas + countAvisos) {
       const avisoIndex = activeSlide - 1 - countMaquinas;
-      slideTitle = "Comunicado Importante";
-      slideContent = <SlideAviso aviso={slideAvisos[avisoIndex]} />;
+      const avisoAtual = slideAvisos[avisoIndex];
+      
+      if (avisoAtual.exibir_como === 'apresentacao' && avisoAtual.arquivo_url) {
+          // ATIVA MODO APRESENTAÇÃO
+          if (!isPresentationMode) setIsPresentationMode(true);
+          slideTitle = `Apresentação • Pág ${avisoAtual.pagina_atual || 1}`;
+          slideContent = <SlideApresentacao url={avisoAtual.arquivo_url} pagina={avisoAtual.pagina_atual || 1} />;
+      } else {
+          if (isPresentationMode) setIsPresentationMode(false);
+          slideTitle = "Comunicado Importante";
+          slideContent = <SlideAviso aviso={avisoAtual} />;
+      }
   } else {
+      if (isPresentationMode) setIsPresentationMode(false);
       slideTitle = "";
       slideContent = <SlideBranding />;
   }
 
   const hasTicker = tickerAvisos.length > 0;
 
-  return (
-    <div ref={rootRef} style={{ width: '100vw', height: '100vh', background: '#f5f5f7', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-       <div style={{ flex: 1, padding: '16px 24px', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-        <Stack h="100%" gap="sm">
-          <Group justify="space-between" align="center">
-            <Group gap="sm" align="center">
-               <Button variant="subtle" color="gray" size="md" leftSection={<IconArrowLeft size={20} />} onClick={() => navigate('/tv')} styles={{ root: { paddingLeft: 0, paddingRight: 10 } }}>Menu</Button>
-               <ThemeIcon size="lg" radius="md" color="blue" variant="light"><IconTrendingUp size={20} /></ThemeIcon>
-               <Title order={2}>{tituloPainel}</Title>
-            </Group>
-            <Group gap="lg" align="center">
-              <Card padding="xs" radius="md" withBorder shadow="xs" bg="white">
-                 <Group gap="xs"><Text size="xs" fw={700} c="dimmed">MÊS</Text><Badge variant="light" color="gray" size="lg">Meta: {formatNum(resumo.metaMes)}h</Badge><Badge variant="filled" color="blue" size="lg">Real: {formatNum(resumo.realMes)}h</Badge><Badge variant="filled" color={perfColor(resumo.metaMes > 0 ? (resumo.realMes/resumo.metaMes)*100 : 0)} size="lg">{resumo.metaMes > 0 ? `${formatNum((resumo.realMes/resumo.metaMes)*100, 1)}%` : '-'}</Badge></Group>
-              </Card>
-              <Card padding="xs" radius="md" withBorder shadow="xs" bg="white">
-                 <Group gap="xs"><Text size="xs" fw={700} c="dimmed">DIA</Text><Badge variant="light" color="gray" size="lg">Meta: {formatNum(resumo.metaDia)}h</Badge><Badge variant="outline" color="blue" size="lg">Real: {formatNum(resumo.realDia)}h</Badge><Badge variant="outline" color={perfColor(resumo.esperadoDia > 0 ? (resumo.realDia/resumo.esperadoDia)*100 : 0)} size="lg">{resumo.esperadoDia > 0 ? `${formatNum((resumo.realDia/resumo.esperadoDia)*100, 1)}%` : '-'}</Badge></Group>
-              </Card>
-              <Card padding="sm" radius="md" withBorder shadow="sm" bg="gray.1">
-                 <Group gap="sm"><ThemeIcon size="lg" radius="xl" color="teal" variant="filled"><IconClock size={20} /></ThemeIcon><Stack gap={0}><Text size="xs" c="dimmed" fw={700} tt="uppercase">Atualizado em</Text><Text size="lg" fw={900} c="dark">{lastUpdateText}</Text></Stack></Group>
-              </Card>
-              <ActionIcon variant="subtle" color="gray" onClick={toggleFullscreen}>{isFullscreen ? <IconMinimize size={20} /> : <IconMaximize size={20} />}</ActionIcon>
-            </Group>
-          </Group>
+  // Estilos Condicionais
+  const mainContainerStyle: React.CSSProperties = isPresentationMode 
+    ? { flex: 1, padding: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }
+    : { flex: 1, padding: '16px 24px', display: 'flex', flexDirection: 'column', minHeight: 0 };
 
-          <Card withBorder shadow="sm" radius="lg" padding="lg" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+  const cardStyle: React.CSSProperties = isPresentationMode
+    ? { flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, borderRadius: 0, border: 'none' }
+    : { flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 };
+
+  const headerStyle: React.CSSProperties = isPresentationMode 
+    ? { position: 'absolute', top: 10, left: 10, zIndex: 1000, background: 'rgba(0,0,0,0.5)', padding: '4px 8px', borderRadius: 4, color: 'white' }
+    : {};
+
+  return (
+    <div ref={rootRef} style={{ width: '100vw', height: '100vh', background: '#f5f5f7', display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
+       
+       {/* CABEÇALHO PRINCIPAL (Oculto na apresentação) */}
+       {!isPresentationMode && (
+         <div style={{ padding: '16px 24px 0' }}>
+           <Group justify="space-between" align="center" mb="sm">
+              <Group gap="sm" align="center">
+                 <Button variant="subtle" color="gray" size="md" leftSection={<IconArrowLeft size={20} />} onClick={() => navigate('/tv')} styles={{ root: { paddingLeft: 0, paddingRight: 10 } }}>Menu</Button>
+                 <ThemeIcon size="lg" radius="md" color="blue" variant="light"><IconTrendingUp size={20} /></ThemeIcon>
+                 <Title order={2}>{tituloPainel}</Title>
+              </Group>
+              <Group gap="lg" align="center">
+                <Card padding="xs" radius="md" withBorder shadow="xs" bg="white">
+                   <Group gap="xs"><Text size="xs" fw={700} c="dimmed">MÊS</Text><Badge variant="light" color="gray" size="lg">Meta: {formatNum(resumo.metaMes)}h</Badge><Badge variant="filled" color="blue" size="lg">Real: {formatNum(resumo.realMes)}h</Badge><Badge variant="filled" color={perfColor(resumo.metaMes > 0 ? (resumo.realMes/resumo.metaMes)*100 : 0)} size="lg">{resumo.metaMes > 0 ? `${formatNum((resumo.realMes/resumo.metaMes)*100, 1)}%` : '-'}</Badge></Group>
+                </Card>
+                <Card padding="xs" radius="md" withBorder shadow="xs" bg="white">
+                   <Group gap="xs"><Text size="xs" fw={700} c="dimmed">DIA</Text><Badge variant="light" color="gray" size="lg">Meta: {formatNum(resumo.metaDia)}h</Badge><Badge variant="outline" color="blue" size="lg">Real: {formatNum(resumo.realDia)}h</Badge><Badge variant="outline" color={perfColor(resumo.esperadoDia > 0 ? (resumo.realDia/resumo.esperadoDia)*100 : 0)} size="lg">{resumo.esperadoDia > 0 ? `${formatNum((resumo.realDia/resumo.esperadoDia)*100, 1)}%` : '-'}</Badge></Group>
+                </Card>
+                <Card padding="sm" radius="md" withBorder shadow="sm" bg="gray.1">
+                   <Group gap="sm"><ThemeIcon size="lg" radius="xl" color="teal" variant="filled"><IconClock size={20} /></ThemeIcon><Stack gap={0}><Text size="xs" c="dimmed" fw={700} tt="uppercase">Atualizado em</Text><Text size="lg" fw={900} c="dark">{lastUpdateText}</Text></Stack></Group>
+                </Card>
+                <ActionIcon variant="subtle" color="gray" onClick={toggleFullscreen}>{isFullscreen ? <IconMinimize size={20} /> : <IconMaximize size={20} />}</ActionIcon>
+              </Group>
+           </Group>
+         </div>
+       )}
+
+       <div style={mainContainerStyle}>
+        <Stack h="100%" gap={isPresentationMode ? 0 : "sm"}>
+          
+          {/* CARD DO SLIDE */}
+          <Card withBorder={!isPresentationMode} shadow={isPresentationMode ? undefined : "sm"} radius={isPresentationMode ? 0 : "lg"} padding={isPresentationMode ? 0 : "lg"} style={cardStyle}>
              {loading ? <Group justify="center" align="center" style={{ height: '100%' }}><Loader size="xl" /></Group> : (
                <>
-                 <Group justify="space-between" mb="xs" align="center">
+                 {/* Navegação do Slide */}
+                 <Group justify="space-between" mb={isPresentationMode ? 0 : "xs"} align="center" style={headerStyle}>
                    <Group gap="xs" align="center">
-                      <ActionIcon variant="light" radius="xl" onClick={goPrev} size="lg"><IconChevronLeft size={18} /></ActionIcon>
-                      <Group gap={6}>
-                        {totalSlides <= 15 && Array.from({ length: totalSlides }).map((_, idx) => (
-                          <ActionIcon key={idx} radius="xl" size="sm" variant={idx === activeSlide ? 'filled' : 'light'} color={idx === activeSlide ? 'blue' : 'gray'} onClick={() => setActiveSlide(idx)} />
-                        ))}
-                      </Group>
-                      <ActionIcon variant="light" radius="xl" onClick={goNext} size="lg"><IconChevronRight size={18} /></ActionIcon>
+                      {!isPresentationMode && <ActionIcon variant="light" radius="xl" onClick={goPrev} size="lg"><IconChevronLeft size={18} /></ActionIcon>}
+                      {!isPresentationMode && totalSlides <= 15 && (
+                        <Group gap={6}>{Array.from({ length: totalSlides }).map((_, idx) => (<ActionIcon key={idx} radius="xl" size="sm" variant={idx === activeSlide ? 'filled' : 'light'} color={idx === activeSlide ? 'blue' : 'gray'} onClick={() => setActiveSlide(idx)} />))}</Group>
+                      )}
+                      <Text fw={600} c={isPresentationMode ? "white" : "dimmed"} size="sm" style={{ textShadow: isPresentationMode ? '0 1px 2px rgba(0,0,0,0.8)' : 'none' }}>
+                         {slideTitle}
+                      </Text>
+                      {!isPresentationMode && <ActionIcon variant="light" radius="xl" onClick={goNext} size="lg"><IconChevronRight size={18} /></ActionIcon>}
                    </Group>
-                   <Text fw={600} c="dimmed" size="sm">{slideTitle}</Text>
                  </Group>
-                 <div style={{ flex: 1, minHeight: 0 }}>{slideContent}</div>
+                 
+                 {/* Conteúdo */}
+                 <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+                    {slideContent}
+                    
+                    {/* Botão Sair Emergência */}
+                    {isPresentationMode && (
+                        <ActionIcon 
+                            variant="filled" color="dark" size="lg" radius="xl" 
+                            style={{ position: 'absolute', top: 10, right: 10, zIndex: 1001, opacity: 0.6 }}
+                            onClick={handleExitPresentation}
+                            onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
+                            onMouseLeave={(e) => e.currentTarget.style.opacity = '0.6'}
+                        >
+                            <IconX size={20} />
+                        </ActionIcon>
+                    )}
+                 </div>
                </>
              )}
           </Card>
         </Stack>
       </div>
-      {hasTicker && !loading && <TickerBar avisos={tickerAvisos} />}
+      
+      {/* Ticker (Oculto na apresentação) */}
+      {!isPresentationMode && hasTicker && !loading && <TickerBar avisos={tickerAvisos} />}
     </div>
   );
 }
@@ -575,6 +656,35 @@ function SlideAviso({ aviso }: { aviso: AvisoTV }) {
       </Stack>
     </Center>
   );
+}
+
+function SlideApresentacao({ url, pagina }: { url: string, pagina: number }) {
+    const isImg = url.match(/\.(jpeg|jpg|gif|png)$/i) != null;
+    if (isImg) {
+        return (
+            <Center h="100%" bg="black" style={{ overflow: 'hidden' }}>
+                <Image src={url} fit="contain" h="100%" w="100%" />
+            </Center>
+        );
+    }
+    return (
+        <div style={{ width: '100%', height: '100%', overflow: 'hidden', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Document 
+                file={url} 
+                loading={<Loader color="white" />}
+                error={<Text c="red">Erro ao carregar PDF.</Text>}
+            >
+                <Page 
+                    pageNumber={pagina} 
+                    renderTextLayer={false} 
+                    renderAnnotationLayer={false}
+                    height={window.innerHeight}
+                    className="pdf-page-canvas"
+                />
+            </Document>
+            <style>{` .react-pdf__Page__canvas { margin: 0 auto; box-shadow: 0 4px 20px rgba(0,0,0,0.5); } `}</style>
+        </div>
+    );
 }
 
 function SlideFactory({ dias }: { dias: FactoryDayRow[] }) {
