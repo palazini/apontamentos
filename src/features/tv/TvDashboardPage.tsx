@@ -49,7 +49,6 @@ import {
   fetchUploadsPorDia,
   type VMetaAtual,
   type VUploadDia,
-  type CentroSmart,
 } from '../../services/db';
 import { supabase } from '../../lib/supabaseClient';
 import { fracDiaLogico } from '../../utils/time';
@@ -568,6 +567,7 @@ export default function TvDashboardPage() {
     return () => window.clearInterval(id);
   }, [loadData]);
 
+  // Atualiza KPIs do topo
   const resumo = useMemo(() => {
     if (!centrosPerf.length) return { metaMes: 0, realMes: 0, aderMes: null, metaDia: 0, realDia: 0, esperadoDia: 0, aderDia: null };
     
@@ -587,9 +587,8 @@ export default function TvDashboardPage() {
     return { metaMes, realMes, aderMes, metaDia, realDia, esperadoDia, aderDia };
   }, [centrosPerf, contextDia]);
 
+  // Ordenação e Paginação (6 itens por padrão: 3 cols x 2 linhas)
   const centrosOrdenados = useMemo(() => [...centrosPerf].sort((a, b) => (b.ader_dia ?? -Infinity) - (a.ader_dia ?? -Infinity)), [centrosPerf]);
-  
-  // PAGINAÇÃO: 3 colunas x 2 linhas = 6 itens (ajustado para caber o layout expandido)
   const itensPorPagina = 6; 
   const centroPages = useMemo(() => chunk(centrosOrdenados, itensPorPagina), [centrosOrdenados, itensPorPagina]);
   const totalSlides = 1 + Math.max(centroPages.length, 1);
@@ -697,7 +696,6 @@ function SlideMaquinas({ page, isFuture }: { page: CentroPerf[]; isFuture: boole
       <SimpleGrid cols={3} spacing="lg" verticalSpacing="lg" style={{ flex: 1, minHeight: 0 }}>
         {page.map((c) => {
           const pctEsperado = c.esperado_dia > 0 ? (c.real_dia / c.esperado_dia) * 100 : 0;
-          const pctMeta = c.meta_dia > 0 ? (c.real_dia / c.meta_dia) * 100 : 0;
           const cor = perfColor(c.ader_dia);
           return (
             <Card key={c.centro_id} withBorder radius="lg" padding="lg" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
@@ -749,7 +747,7 @@ function SlideMaquinas({ page, isFuture }: { page: CentroPerf[]; isFuture: boole
                 )}
 
                 <Stack gap="sm" mt={c.is_parent ? 'auto' : 0}>
-                  <Stack gap={2}><Group justify="space-between"><Text size="sm" fw={700} c="dimmed">Progresso vs Esperado</Text><Text size="sm" fw={800}>{clamp(c.real_dia > 0 && c.esperado_dia > 0 ? (c.real_dia/c.esperado_dia)*100 : 0).toFixed(0)}%</Text></Group><Progress size="xl" radius="md" value={clamp(c.real_dia > 0 && c.esperado_dia > 0 ? (c.real_dia/c.esperado_dia)*100 : 0)} color={perfColor(c.real_dia > 0 && c.esperado_dia > 0 ? (c.real_dia/c.esperado_dia)*100 : 0)} striped animated={c.real_dia < c.esperado_dia} /></Stack>
+                  <Stack gap={2}><Group justify="space-between"><Text size="sm" fw={700} c="dimmed">Progresso vs Esperado</Text><Text size="sm" fw={800}>{clamp(pctEsperado).toFixed(0)}%</Text></Group><Progress size="xl" radius="md" value={clamp(pctEsperado)} color={perfColor(pctEsperado)} striped animated={pctEsperado < 100} /></Stack>
                   <Stack gap={2}><Group justify="space-between"><Text size="sm" fw={700} c="dimmed">Progresso vs Meta</Text><Text size="sm" fw={800}>{clamp(c.pct_meta_dia ?? 0).toFixed(0)}%</Text></Group><Progress size="xl" radius="md" value={clamp(c.pct_meta_dia ?? 0)} color="blue" /></Stack>
                 </Stack>
               </Stack>
