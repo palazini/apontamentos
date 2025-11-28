@@ -37,6 +37,7 @@ import {
   IconClock,
   IconAlertTriangle,
   IconArrowLeft,
+  IconUsersGroup, // Ícone para o card de equipe/agregado
 } from '@tabler/icons-react';
 
 // Importações locais
@@ -342,7 +343,6 @@ export default function TvDashboardPage() {
       // 3. Buscar Histórico COMPLETO apenas para o escopo selecionado
       const minDate = startMes < startSerie ? startMes : startSerie;
       
-      // OBS: fetchCentroSeriesRange busca dados para múltiplos IDs
       let fullHistory: any[] = [];
       if (scopeIds.length > 0) {
           fullHistory = await fetchCentroSeriesRange(
@@ -356,11 +356,10 @@ export default function TvDashboardPage() {
       const metasAtuais = (metasAtuaisAll as VMetaAtual[]).filter((m) => ativosSet.has(m.centro_id));
       const metaDiaTotalFiltrada = metasAtuais.reduce((acc, curr) => acc + Number(curr.meta_horas), 0);
 
-      // 5. Montar Série do Gráfico (Agregando os dados filtrados)
+      // 5. Montar Série do Gráfico (Agregando os dados filtrados MANUALMENTE)
       const fabMap = new Map<string, number>();
       
       fullHistory.forEach((r) => {
-          // Considera apenas se estiver no range do gráfico
           if (r.data_wip >= toISO(startSerie)) {
              const current = fabMap.get(r.data_wip) ?? 0;
              fabMap.set(r.data_wip, current + Number(r.produzido_h));
@@ -372,15 +371,13 @@ export default function TvDashboardPage() {
       for (const iso of dias) {
         if (isSundayISO(iso)) continue; 
         const prod = +(fabMap.get(iso) ?? 0).toFixed(2);
-        // Usa a meta FILTRADA como base para o %
-        // Nota: A meta diária aqui é a meta ATUAL (hoje). Comparar histórico com meta de hoje é uma aproximação comum.
         const pct = metaDiaTotalFiltrada > 0 ? (prod / metaDiaTotalFiltrada) * 100 : 100;
         
         serieFactory.push({
           iso,
           label: shortBR(iso),
           produzido: prod,
-          meta: metaDiaTotalFiltrada,
+          meta: metaDiaTotalFiltrada, // Meta filtrada do dia atual (aproximação para histórico)
           pct,
           isSaturday: isSaturdayISO(iso),
         });
@@ -406,7 +403,6 @@ export default function TvDashboardPage() {
         fullHistory.forEach((r) => {
           if (isSundayISO(r.data_wip)) return;
           const cid = r.centro_id as number;
-          // Considera apenas se estiver no range do mês atual
           if (r.data_wip >= toISO(startMes)) {
              const val = Number(r.produzido_h) || 0;
              prodMesByCentro.set(cid, (prodMesByCentro.get(cid) ?? 0) + val);
@@ -479,7 +475,7 @@ export default function TvDashboardPage() {
     } finally {
       if (!cancelledRef.current) setLoading(false);
     }
-  }, [scope]); // Recarrega se o scope mudar
+  }, [scope]);
 
   useEffect(() => {
     cancelledRef.current = false;
@@ -520,7 +516,11 @@ export default function TvDashboardPage() {
   }, [centrosPerf, contextDia]);
 
   const centrosOrdenados = useMemo(() => [...centrosPerf].sort((a, b) => (b.ader_dia ?? -Infinity) - (a.ader_dia ?? -Infinity)), [centrosPerf]);
-  const centroPages = useMemo(() => chunk(centrosOrdenados, 8), [centrosOrdenados]);
+  
+  // Se for Montagem, a paginação é menor para caber o card fixo (ex: 6 em vez de 8)
+  const itensPorPagina = scope === 'montagem' ? 6 : 8;
+  const centroPages = useMemo(() => chunk(centrosOrdenados, itensPorPagina), [centrosOrdenados, itensPorPagina]);
+  
   const totalSlides = 1 + Math.max(centroPages.length, 1);
 
   useEffect(() => {
@@ -613,7 +613,12 @@ export default function TvDashboardPage() {
                 {activeSlide === 0 ? (
                   <SlideFactory dias={factoryDays} />
                 ) : (
-                  <SlideMaquinas page={centroPages[activeSlide - 1] ?? []} isFuture={contextDia.isFuture} />
+                  <SlideMaquinas 
+                    page={centroPages[activeSlide - 1] ?? []} 
+                    isFuture={contextDia.isFuture} 
+                    scope={scope} 
+                    resumo={resumo} // Passando o resumo para o Card Fixo
+                  />
                 )}
               </div>
             </>
@@ -662,46 +667,87 @@ function SlideFactory({ dias }: { dias: FactoryDayRow[] }) {
   );
 }
 
-function SlideMaquinas({ page, isFuture }: { page: CentroPerf[]; isFuture: boolean }) {
-  if (!page.length) return <Group justify="center" align="center" h="100%"><Text c="dimmed" size="xl">Nenhuma máquina neste painel.</Text></Group>;
+function SlideMaquinas({ page, isFuture, scope, resumo }: { page: CentroPerf[]; isFuture: boolean; scope?: string; resumo?: any }) {
+  if (!page.length && scope !== 'montagem') return <Group justify="center" align="center" h="100%"><Text c="dimmed" size="xl">Nenhuma máquina neste painel.</Text></Group>;
+
   return (
     <Stack gap="md" h="100%">
-      <Title order={2}>Performance por Máquina • Visão do Dia</Title>
-      <SimpleGrid cols={4} spacing="md" verticalSpacing="md" style={{ flex: 1, minHeight: 0 }}>
-        {page.map((c) => {
-          const pctEsperado = c.esperado_dia > 0 ? (c.real_dia / c.esperado_dia) * 100 : 0;
-          const pctMeta = c.meta_dia > 0 ? (c.real_dia / c.meta_dia) * 100 : 0;
-          const cor = perfColor(c.ader_dia);
-          return (
-            <Card key={c.centro_id} withBorder radius="lg" padding="lg" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-              <Stack gap="md" h="100%">
-                <Group justify="space-between" align="flex-start">
-                  <Stack gap={0}>
-                    <Text fw={900} size="xl" style={{ fontSize: '1.5rem' }}>{c.codigo}</Text>
-                    {c.is_stale && <Badge variant="filled" color="orange" size="sm" leftSection={<IconAlertTriangle size={12} />}>Dados de {c.last_ref_time}</Badge>}
+      <Group justify="space-between" align="center">
+        <Title order={2}>Performance por Máquina • Visão do Dia</Title>
+      </Group>
+
+      {/* CARD FIXO DE RESUMO (Apenas para Montagem) */}
+      {scope === 'montagem' && resumo && (
+        <Card withBorder radius="lg" padding="md" bg="blue.0" style={{ border: '2px solid var(--mantine-color-blue-3)' }}>
+           <Group justify="space-between" align="center">
+              <Group>
+                 <ThemeIcon size={48} radius="md" variant="filled" color="blue"><IconUsersGroup size={28} /></ThemeIcon>
+                 <div>
+                    <Text size="sm" c="dimmed" fw={700} tt="uppercase">Consolidado Montagem</Text>
+                    <Text size="xl" fw={900} c="blue.9">Resultado da Equipe</Text>
+                 </div>
+              </Group>
+              
+              <Group gap={40}>
+                 <Stack gap={0} align="center">
+                    <Text size="xs" c="dimmed" fw={700} tt="uppercase">Produzido</Text>
+                    <Text size="xl" fw={900} c="dark">{formatNum(resumo.realDia)} h</Text>
+                 </Stack>
+                 <Stack gap={0} align="center">
+                    <Text size="xs" c="dimmed" fw={700} tt="uppercase">Meta Total</Text>
+                    <Text size="xl" fw={900} c="dark">{formatNum(resumo.metaDia)} h</Text>
+                 </Stack>
+                 <Stack gap={0} align="center">
+                    <Text size="xs" c="dimmed" fw={700} tt="uppercase">Aderência</Text>
+                    <Badge size="xl" variant="filled" color={perfColor(resumo.aderDia)}>
+                       {resumo.aderDia ? `${formatNum(resumo.aderDia, 1)}%` : '-'}
+                    </Badge>
+                 </Stack>
+              </Group>
+           </Group>
+        </Card>
+      )}
+
+      {/* Grid de Máquinas (Se houver) */}
+      {page.length > 0 ? (
+        <SimpleGrid cols={4} spacing="md" verticalSpacing="md" style={{ flex: 1, minHeight: 0 }}>
+          {page.map((c) => {
+            const pctEsperado = c.esperado_dia > 0 ? (c.real_dia / c.esperado_dia) * 100 : 0;
+            const pctMeta = c.meta_dia > 0 ? (c.real_dia / c.meta_dia) * 100 : 0;
+            const cor = perfColor(c.ader_dia);
+            return (
+              <Card key={c.centro_id} withBorder radius="lg" padding="lg" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                <Stack gap="md" h="100%">
+                  <Group justify="space-between" align="flex-start">
+                    <Stack gap={0}>
+                      <Text fw={900} size="xl" style={{ fontSize: '1.5rem' }}>{c.codigo}</Text>
+                      {c.is_stale && <Badge variant="filled" color="orange" size="sm" leftSection={<IconAlertTriangle size={12} />}>Dados de {c.last_ref_time}</Badge>}
+                    </Stack>
+                    {isFuture ? <Badge variant="light" color="gray" size="lg">FUTURO</Badge> : <Badge color={cor} variant="filled" size="xl">{c.ader_dia == null ? '-' : `${formatNum(c.ader_dia, 0)}%`}</Badge>}
+                  </Group>
+                  <Group gap="md" align="center" style={{ flex: 1 }} wrap="nowrap">
+                    <RingProgress size={130} thickness={14} roundCaps sections={[{ value: clamp(c.ader_dia ?? 0, 0, 200), color: perfColor(c.ader_dia) }]} label={<Text ta="center" size="md" fw={900} c={cor}>{c.ader_dia ? `${c.ader_dia.toFixed(0)}%` : '-'}</Text>} />
+                    <Stack gap={4} style={{ minWidth: 0 }}>
+                        <Text size="sm" c="dimmed" fw={700} tt="uppercase" style={{ letterSpacing: '0.5px' }}>Produzido</Text>
+                        <Text fw={900} style={{ fontSize: '2.6rem', lineHeight: 1, color: '#1f2937' }}>{formatNum(c.real_dia)}h</Text>
+                        <Stack gap={2} mt={6}>
+                          <Group gap={6} align="baseline"><Text size="sm" c="dimmed" fw={600}>Esperado:</Text><Text size="md" fw={800} c="dimmed">{formatNum(c.esperado_dia)}h</Text></Group>
+                          <Group gap={6} align="baseline"><Text size="sm" c="dimmed" fw={600}>Meta Dia:</Text><Text size="md" fw={800} c="dimmed">{formatNum(c.meta_dia)}h</Text></Group>
+                        </Stack>
+                    </Stack>
+                  </Group>
+                  <Stack gap="sm">
+                    <Stack gap={2}><Group justify="space-between"><Text size="sm" fw={700} c="dimmed">Progresso vs Esperado</Text><Text size="sm" fw={800}>{clamp(pctEsperado).toFixed(0)}%</Text></Group><Progress size="xl" radius="md" value={clamp(pctEsperado)} color={perfColor(pctEsperado)} striped animated={pctEsperado < 100} /></Stack>
+                    <Stack gap={2}><Group justify="space-between"><Text size="sm" fw={700} c="dimmed">Progresso vs Meta</Text><Text size="sm" fw={800}>{clamp(pctMeta).toFixed(0)}%</Text></Group><Progress size="xl" radius="md" value={clamp(pctMeta)} color="blue" /></Stack>
                   </Stack>
-                  {isFuture ? <Badge variant="light" color="gray" size="lg">FUTURO</Badge> : <Badge color={cor} variant="filled" size="xl">{c.ader_dia == null ? '-' : `${formatNum(c.ader_dia, 0)}%`}</Badge>}
-                </Group>
-                <Group gap="md" align="center" style={{ flex: 1 }} wrap="nowrap">
-                  <RingProgress size={130} thickness={14} roundCaps sections={[{ value: clamp(c.ader_dia ?? 0, 0, 200), color: perfColor(c.ader_dia) }]} label={<Text ta="center" size="md" fw={900} c={cor}>{c.ader_dia ? `${c.ader_dia.toFixed(0)}%` : '-'}</Text>} />
-                  <Stack gap={4} style={{ minWidth: 0 }}>
-                      <Text size="sm" c="dimmed" fw={700} tt="uppercase" style={{ letterSpacing: '0.5px' }}>Produzido</Text>
-                      <Text fw={900} style={{ fontSize: '2.6rem', lineHeight: 1, color: '#1f2937' }}>{formatNum(c.real_dia)}h</Text>
-                      <Stack gap={2} mt={6}>
-                         <Group gap={6} align="baseline"><Text size="sm" c="dimmed" fw={600}>Esperado:</Text><Text size="md" fw={800} c="dimmed">{formatNum(c.esperado_dia)}h</Text></Group>
-                         <Group gap={6} align="baseline"><Text size="sm" c="dimmed" fw={600}>Meta Dia:</Text><Text size="md" fw={800} c="dimmed">{formatNum(c.meta_dia)}h</Text></Group>
-                      </Stack>
-                  </Stack>
-                </Group>
-                <Stack gap="sm">
-                  <Stack gap={2}><Group justify="space-between"><Text size="sm" fw={700} c="dimmed">Progresso vs Esperado</Text><Text size="sm" fw={800}>{clamp(pctEsperado).toFixed(0)}%</Text></Group><Progress size="xl" radius="md" value={clamp(pctEsperado)} color={perfColor(pctEsperado)} striped animated={pctEsperado < 100} /></Stack>
-                  <Stack gap={2}><Group justify="space-between"><Text size="sm" fw={700} c="dimmed">Progresso vs Meta</Text><Text size="sm" fw={800}>{clamp(pctMeta).toFixed(0)}%</Text></Group><Progress size="xl" radius="md" value={clamp(pctMeta)} color="blue" /></Stack>
                 </Stack>
-              </Stack>
-            </Card>
-          );
-        })}
-      </SimpleGrid>
+              </Card>
+            );
+          })}
+        </SimpleGrid>
+      ) : (
+        scope === 'montagem' && <Group justify="center" h="100%"><Text c="dimmed">Sem bancadas ativas.</Text></Group>
+      )}
     </Stack>
   );
 }
