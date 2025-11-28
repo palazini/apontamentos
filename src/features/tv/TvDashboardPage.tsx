@@ -48,7 +48,6 @@ import {
   fetchCentroSeriesRange,
   fetchUltimoDiaComDados,
   fetchUploadsPorDia,
-  type VMetaAtual,
   type VUploadDia,
 } from '../../services/db';
 import { supabase } from '../../lib/supabaseClient';
@@ -570,7 +569,7 @@ export default function TvDashboardPage() {
   const resumo = useMemo(() => {
     if (!centrosPerf.length) return { metaMes: 0, realMes: 0, aderMes: null, metaDia: 0, realDia: 0, esperadoDia: 0, aderDia: null };
     
-    // Soma apenas os "Líderes" (Pais ou sem pai) para não duplicar
+    // Filtra para somar apenas os "Líderes" (Pais ou sem pai) para não duplicar no cabeçalho
     const lideres = centrosPerf.filter(c => c.is_parent || !c.has_parent);
     
     return lideres.reduce((acc, c) => {
@@ -682,7 +681,18 @@ function SlideFactory({ dias }: { dias: FactoryDayRow[] }) {
             <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.4} />
             <XAxis dataKey="label" tick={{ fontSize: 14, fontWeight: 500 }} tickMargin={10} />
             <YAxis hide /> <ReTooltip content={<FactoryTooltip />} cursor={{ fill: 'rgba(0,0,0,0.05)' }}/>
-            <Bar dataKey="produzido" name="Produzido (h)" radius={[6, 6, 0, 0]} isAnimationActive={true}>{dias.map((d, i) => <Cell key={i} fill={d.isSaturday ? '#3b82f6' : '#f97316'} />)}<LabelList dataKey="produzido" content={<FactoryBarLabel />} /></Bar>
+            
+            {/* GRÁFICO COM CORES INTELIGENTES */}
+            <Bar dataKey="produzido" name="Produzido (h)" radius={[6, 6, 0, 0]} isAnimationActive={true}>
+                {dias.map((d, i) => {
+                    // Lógica de Cores: Verde se bateu a meta, Azul Sábado, Laranja Dia Útil
+                    const bateuMeta = d.meta > 0 && d.produzido >= d.meta;
+                    const color = bateuMeta ? '#16a34a' : (d.isSaturday ? '#3b82f6' : '#f97316');
+                    return <Cell key={i} fill={color} />;
+                })}
+                <LabelList dataKey="produzido" content={<FactoryBarLabel />} />
+            </Bar>
+            
             <Line type="monotone" dataKey="meta" name="Meta diária (h)" stroke="#1f2937" strokeDasharray="5 5" dot={false} strokeWidth={3} />
           </ComposedChart>
         </ResponsiveContainer>
@@ -754,7 +764,7 @@ function SlideMaquinas({ page, isFuture }: { page: CentroPerf[]; isFuture: boole
                 )}
 
                 <Stack gap="sm" mt={c.is_parent ? 'auto' : 0}>
-                  <Stack gap={2}><Group justify="space-between"><Text size="sm" fw={700} c="dimmed">Progresso vs Esperado</Text><Text size="sm" fw={800}>{clamp(c.esperado_dia > 0 ? (c.real_dia/c.esperado_dia)*100 : 0).toFixed(0)}%</Text></Group><Progress size="xl" radius="md" value={clamp(c.esperado_dia > 0 ? (c.real_dia/c.esperado_dia)*100 : 0)} color={perfColor(c.esperado_dia > 0 ? (c.real_dia/c.esperado_dia)*100 : 0)} striped animated={c.real_dia < c.esperado_dia} /></Stack>
+                  <Stack gap={2}><Group justify="space-between"><Text size="sm" fw={700} c="dimmed">Progresso vs Esperado</Text><Text size="sm" fw={800}>{clamp(pctEsperado).toFixed(0)}%</Text></Group><Progress size="xl" radius="md" value={clamp(pctEsperado)} color={perfColor(pctEsperado)} striped animated={pctEsperado < 100} /></Stack>
                   <Stack gap={2}><Group justify="space-between"><Text size="sm" fw={700} c="dimmed">Progresso vs Meta</Text><Text size="sm" fw={800}>{clamp(c.pct_meta_dia ?? 0).toFixed(0)}%</Text></Group><Progress size="xl" radius="md" value={clamp(c.pct_meta_dia ?? 0)} color="blue" /></Stack>
                 </Stack>
               </Stack>
