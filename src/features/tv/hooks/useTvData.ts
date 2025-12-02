@@ -1,14 +1,30 @@
+//src/features/tv/hooks/useTvData.ts
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-    fetchMetasAtuais, fetchCentroSeriesRange, fetchUltimoDiaComDados, fetchUploadsPorDia, fetchAvisosAtivos,
+    fetchMetasAtuais,
+    fetchCentroSeriesRange,
+    fetchUltimoDiaComDados,
+    fetchUploadsPorDia,
+    fetchAvisosAtivos,
     type AvisoTV
 } from '../../../services/db';
 import { supabase } from '../../../lib/supabaseClient';
 import { fracDiaLogico } from '../../../utils/time';
 import type { FactoryDayRow, CentroPerf, Contribuinte } from '../types';
 import {
-    getNow, startOfDayLocal, toISO, isoToLocalDate, addDays, daysBetween, isSundayISO, isSaturdayISO,
-    countDaysExcludingSundays, shortBR, isCentroAtivoNoDia, extractTime, chunk
+    getNow,
+    startOfDayLocal,
+    toISO,
+    isoToLocalDate,
+    addDays,
+    daysBetween,
+    isSundayISO,
+    isSaturdayISO,
+    countDaysExcludingSundays,
+    shortBR,
+    isCentroAtivoNoDia,
+    extractTime,
+    chunk
 } from '../utils';
 
 export function useTvData(scope: string | undefined) {
@@ -18,6 +34,10 @@ export function useTvData(scope: string | undefined) {
     const [factoryDays, setFactoryDays] = useState<FactoryDayRow[]>([]);
     const [centrosPerf, setCentrosPerf] = useState<CentroPerf[]>([]);
     const [lastUpdateText, setLastUpdateText] = useState<string>('–');
+    
+    // --- NOVO STATE: Texto amigável da data de referência (Ex: "ONTEM • 01/12") ---
+    const [dataReferenciaText, setDataReferenciaText] = useState<string>('...'); 
+    
     const [contextDia, setContextDia] = useState<{ isPast: boolean; isToday: boolean; isFuture: boolean; frac: number; }>({ isPast: false, isToday: false, isFuture: false, frac: 0 });
 
     // Avisos
@@ -34,10 +54,39 @@ export function useTvData(scope: string | undefined) {
 
             const lastDayIso = await fetchUltimoDiaComDados();
             if (!lastDayIso) {
-                if (!cancelledRef.current) { setFactoryDays([]); setCentrosPerf([]); setLastUpdateText('Sem dados'); }
+                if (!cancelledRef.current) { 
+                    setFactoryDays([]); 
+                    setCentrosPerf([]); 
+                    setLastUpdateText('Sem dados'); 
+                    setDataReferenciaText('Sem dados');
+                }
                 return;
             }
+            
+            // Define a data lógica dos dados (ex: 01/12)
             const diaRefLocal = startOfDayLocal(isoToLocalDate(lastDayIso));
+            
+            // --- NOVA LÓGICA DE LABEL DE DATA ---
+            const todayLocal = startOfDayLocal(getNow());
+            const yesterdayLocal = new Date(todayLocal);
+            yesterdayLocal.setDate(yesterdayLocal.getDate() - 1);
+
+            const diaStr = diaRefLocal.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+            let labelRef = diaStr;
+
+            if (diaRefLocal.getTime() === todayLocal.getTime()) {
+                labelRef = `HOJE • ${diaStr}`;
+            } else if (diaRefLocal.getTime() === yesterdayLocal.getTime()) {
+                labelRef = `ONTEM • ${diaStr}`;
+            } else {
+                labelRef = diaStr; 
+            }
+
+            if (!cancelledRef.current) {
+                setDataReferenciaText(labelRef);
+            }
+            // -------------------------------------
+
             const uploadsDia = await fetchUploadsPorDia(lastDayIso);
             let ativo = uploadsDia.find((u) => u.ativo) ?? uploadsDia.slice().sort((a: any, b: any) => new Date(a.enviado_em).getTime() - new Date(b.enviado_em).getTime()).at(-1) ?? null;
 
@@ -47,13 +96,19 @@ export function useTvData(scope: string | undefined) {
             if (ativo) {
                 const dt = new Date(ativo.enviado_em);
                 if (!localStorage.getItem('TV_DEBUG_DATE')) dataRefGlobalObj = dt;
-                const dataStr = dt.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-                const horaStr = dt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-                horaRefGlobal = horaStr;
-                if (!cancelledRef.current) setLastUpdateText(`${dataStr} • ${horaStr}`);
-            } else if (!cancelledRef.current) setLastUpdateText('Sem dados');
+                
+                // Formata hora do upload para o subtítulo
+                const dataStrUpload = dt.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+                const horaStrUpload = dt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                
+                horaRefGlobal = horaStrUpload;
+                
+                // Mantemos o lastUpdateText com a data do arquivo para auditoria
+                if (!cancelledRef.current) setLastUpdateText(`${dataStrUpload} • ${horaStrUpload}`);
+            } else if (!cancelledRef.current) {
+                setLastUpdateText('Sem dados');
+            }
 
-            const todayLocal = startOfDayLocal(getNow());
             const isPast = diaRefLocal < todayLocal;
             const isToday = diaRefLocal.getTime() === todayLocal.getTime();
             const isFuture = !isPast && !isToday;
@@ -221,6 +276,7 @@ export function useTvData(scope: string | undefined) {
         factoryDays,
         centrosPerf,
         lastUpdateText,
+        dataReferenciaText, // Retornando a nova variável
         contextDia,
         avisos,
         resumo,

@@ -1,10 +1,12 @@
+//src/features/tv/TvDashboardPage.tsx
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ActionIcon, Badge, Card, Group, Loader, Stack, Text, Title, ThemeIcon, Button
 } from '@mantine/core';
 import {
-  IconChevronLeft, IconChevronRight, IconMaximize, IconMinimize, IconTrendingUp, IconClock, IconArrowLeft, IconX
+  IconChevronLeft, IconChevronRight, IconMaximize, IconMinimize, IconTrendingUp, 
+  IconClock, IconArrowLeft, IconX, IconCalendar // Adicionado IconCalendar
 } from '@tabler/icons-react';
 
 import { useTvData } from './hooks/useTvData';
@@ -28,6 +30,7 @@ export default function TvDashboardPage() {
     loading,
     factoryDays,
     lastUpdateText,
+    dataReferenciaText, // <--- Pegando a nova variável aqui
     contextDia,
     avisos,
     resumo,
@@ -243,9 +246,27 @@ export default function TvDashboardPage() {
               <Card padding="xs" radius="md" withBorder shadow="xs" bg="white">
                 <Group gap="xs"><Text size="xs" fw={700} c="dimmed">DIA</Text><Badge variant="light" color="gray" size="lg">Meta: {formatNum(resumo.metaDia)}h</Badge><Badge variant="outline" color="blue" size="lg">Real: {formatNum(resumo.realDia)}h</Badge><Badge variant="outline" color={perfColor(resumo.esperadoDia > 0 ? (resumo.realDia / resumo.esperadoDia) * 100 : 0)} size="lg">{resumo.esperadoDia > 0 ? `${formatNum((resumo.realDia / resumo.esperadoDia) * 100, 1)}%` : '-'}</Badge></Group>
               </Card>
-              <Card padding="sm" radius="md" withBorder shadow="sm" bg="gray.1">
-                <Group gap="sm"><ThemeIcon size="lg" radius="xl" color="teal" variant="filled"><IconClock size={20} /></ThemeIcon><Stack gap={0}><Text size="xs" c="dimmed" fw={700} tt="uppercase">Atualizado em</Text><Text size="lg" fw={900} c="dark">{lastUpdateText}</Text></Stack></Group>
+              
+              {/* --- CARD ATUALIZADO (Data de Referência em Destaque) --- */}
+              <Card padding="sm" radius="md" withBorder shadow="sm" bg="white">
+                <Group gap="sm">
+                  <ThemeIcon 
+                    size="lg" 
+                    radius="xl" 
+                    // Se for hoje usa cor normal (teal), se for ontem/passado usa Laranja p/ alertar
+                    color={contextDia.isToday ? "teal" : "orange"} 
+                    variant="light"
+                  >
+                    {contextDia.isToday ? <IconClock size={20} /> : <IconCalendar size={20} />}
+                  </ThemeIcon>
+                  <Stack gap={0}>
+                    <Text size="xs" c="dimmed" fw={700} tt="uppercase">Visão de</Text>
+                    <Text size="lg" fw={900} c="dark" style={{ lineHeight: 1.1 }}>{dataReferenciaText}</Text>
+                    <Text size="10px" c="dimmed">Atualizado: {lastUpdateText}</Text>
+                  </Stack>
+                </Group>
               </Card>
+              
               <ActionIcon variant="subtle" color="gray" onClick={toggleFullscreen}>{isFullscreen ? <IconMinimize size={20} /> : <IconMaximize size={20} />}</ActionIcon>
             </Group>
           </Group>

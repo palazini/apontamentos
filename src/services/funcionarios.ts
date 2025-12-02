@@ -1,3 +1,4 @@
+//src/services/funcionarios.ts
 import { supabase } from '../lib/supabaseClient';
 
 export type FuncionarioMeta = {

@@ -1,3 +1,4 @@
+//src/services/centros.ts
 import { supabase } from '../lib/supabaseClient';
 
 export type Centro = {

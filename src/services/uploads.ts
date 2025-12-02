@@ -1,3 +1,4 @@
+//src/services/uploads.ts
 import { supabase } from '../lib/supabaseClient';
 
 export type VUploadDia = {

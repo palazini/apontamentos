@@ -1,3 +1,4 @@
+//src/services/series.ts
 import { supabase } from '../lib/supabaseClient';
 
 export type FabricaDia = { data_wip: string; produzido_h: number };

@@ -1,3 +1,4 @@
+//src/services/db.ts
 export * from './centros';
 export * from './uploads';
 export * from './metas';
