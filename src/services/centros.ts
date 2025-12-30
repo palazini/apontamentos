@@ -9,6 +9,7 @@ export type Centro = {
     escopo: 'usinagem' | 'montagem';
     centro_pai_id: number | null;
     exibir_filhos: boolean;
+    empresa_id: number;
 };
 
 export type Alias = {
@@ -24,25 +25,32 @@ export type CentroSmart = {
     ativo?: boolean;
     desativado_desde?: string | null;
     escopo?: 'usinagem' | 'montagem';
+    empresa_id?: number;
 };
 
-export async function fetchCentros(): Promise<Centro[]> {
+export async function fetchCentros(empresaId: number): Promise<Centro[]> {
     const { data, error } = await supabase
         .from('centros')
-        .select('id,codigo,ativo,desativado_desde,escopo,centro_pai_id,exibir_filhos')
+        .select('id,codigo,ativo,desativado_desde,escopo,centro_pai_id,exibir_filhos,empresa_id')
+        .eq('empresa_id', empresaId)
         .order('codigo', { ascending: true });
     if (error) throw error;
     return (data ?? []) as Centro[];
 }
 
-export async function createCentro(codigo: string, escopo: 'usinagem' | 'montagem' = 'usinagem'): Promise<number> {
+export async function createCentro(
+    codigo: string,
+    empresaId: number,
+    escopo: 'usinagem' | 'montagem' = 'usinagem'
+): Promise<number> {
     const { data, error } = await supabase
         .from('centros')
         .insert({
             codigo: codigo.trim(),
             ativo: true,
             escopo: escopo,
-            exibir_filhos: false // Default
+            exibir_filhos: false,
+            empresa_id: empresaId
         })
         .select('id')
         .single();
@@ -50,10 +58,11 @@ export async function createCentro(codigo: string, escopo: 'usinagem' | 'montage
     return data!.id as number;
 }
 
-export async function fetchAliases(): Promise<Alias[]> {
+export async function fetchAliases(empresaId: number): Promise<Alias[]> {
     const { data, error } = await supabase
         .from('centro_aliases')
-        .select('id, alias_texto, centro_id, centro:centros(id, codigo)')
+        .select('id, alias_texto, centro_id, centro:centros!inner(id, codigo, empresa_id)')
+        .eq('centro.empresa_id', empresaId)
         .order('alias_texto', { ascending: true });
     if (error) throw error;
 
@@ -83,17 +92,22 @@ export async function deleteAlias(id: number) {
     if (error) throw error;
 }
 
-export async function fetchCentrosSmart(): Promise<CentroSmart[]> {
+export async function fetchCentrosSmart(empresaId: number): Promise<CentroSmart[]> {
     const tryNew = await supabase
         .from('centros')
-        .select('id,codigo,desativado_desde,ativo,escopo') // <--- Add escopo
+        .select('id,codigo,desativado_desde,ativo,escopo,empresa_id')
+        .eq('empresa_id', empresaId)
         .order('codigo', { ascending: true });
 
     if (!tryNew.error) return (tryNew.data ?? []) as CentroSmart[];
 
     // fallback legado (caso a coluna não exista, mas você já rodou o SQL)
     if (tryNew.error?.code === 'PGRST204') {
-        const { data, error } = await supabase.from('centros').select('id,codigo,ativo').order('codigo', { ascending: true });
+        const { data, error } = await supabase
+            .from('centros')
+            .select('id,codigo,ativo')
+            .eq('empresa_id', empresaId)
+            .order('codigo', { ascending: true });
         if (error) throw error;
         return (data ?? []).map((x: any) => ({ ...x, desativado_desde: null, escopo: 'usinagem' })) as CentroSmart[];
     }
@@ -130,8 +144,11 @@ export async function reativarCentro(centro_id: number): Promise<void> {
     throw up.error;
 }
 
-export async function fetchCentrosDict(): Promise<Record<number, string>> {
-    const { data, error } = await supabase.from('centros').select('id,codigo');
+export async function fetchCentrosDict(empresaId: number): Promise<Record<number, string>> {
+    const { data, error } = await supabase
+        .from('centros')
+        .select('id,codigo')
+        .eq('empresa_id', empresaId);
     if (error) throw error;
     const dict: Record<number, string> = {};
     (data ?? []).forEach((r: any) => (dict[Number(r.id)] = String(r.codigo)));

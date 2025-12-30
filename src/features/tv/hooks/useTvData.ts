@@ -27,17 +27,17 @@ import {
     chunk
 } from '../utils';
 
-export function useTvData(scope: string | undefined) {
+export function useTvData(empresaId: number, scope: string | undefined) {
     const [loading, setLoading] = useState(true);
 
     // Dados de Produção
     const [factoryDays, setFactoryDays] = useState<FactoryDayRow[]>([]);
     const [centrosPerf, setCentrosPerf] = useState<CentroPerf[]>([]);
     const [lastUpdateText, setLastUpdateText] = useState<string>('–');
-    
+
     // --- NOVO STATE: Texto amigável da data de referência (Ex: "ONTEM • 01/12") ---
-    const [dataReferenciaText, setDataReferenciaText] = useState<string>('...'); 
-    
+    const [dataReferenciaText, setDataReferenciaText] = useState<string>('...');
+
     const [contextDia, setContextDia] = useState<{ isPast: boolean; isToday: boolean; isFuture: boolean; frac: number; }>({ isPast: false, isToday: false, isFuture: false, frac: 0 });
 
     // Avisos
@@ -49,23 +49,23 @@ export function useTvData(scope: string | undefined) {
         cancelledRef.current = false;
         try {
             setLoading(true);
-            const avisosAtivos = await fetchAvisosAtivos(scope || 'geral');
+            const avisosAtivos = await fetchAvisosAtivos(empresaId, scope || 'geral');
             if (!cancelledRef.current) setAvisos(avisosAtivos);
 
-            const lastDayIso = await fetchUltimoDiaComDados();
+            const lastDayIso = await fetchUltimoDiaComDados(empresaId);
             if (!lastDayIso) {
-                if (!cancelledRef.current) { 
-                    setFactoryDays([]); 
-                    setCentrosPerf([]); 
-                    setLastUpdateText('Sem dados'); 
+                if (!cancelledRef.current) {
+                    setFactoryDays([]);
+                    setCentrosPerf([]);
+                    setLastUpdateText('Sem dados');
                     setDataReferenciaText('Sem dados');
                 }
                 return;
             }
-            
+
             // Define a data lógica dos dados (ex: 01/12)
             const diaRefLocal = startOfDayLocal(isoToLocalDate(lastDayIso));
-            
+
             // --- NOVA LÓGICA DE LABEL DE DATA ---
             const todayLocal = startOfDayLocal(getNow());
             const yesterdayLocal = new Date(todayLocal);
@@ -79,7 +79,7 @@ export function useTvData(scope: string | undefined) {
             } else if (diaRefLocal.getTime() === yesterdayLocal.getTime()) {
                 labelRef = `ONTEM • ${diaStr}`;
             } else {
-                labelRef = diaStr; 
+                labelRef = diaStr;
             }
 
             if (!cancelledRef.current) {
@@ -87,7 +87,7 @@ export function useTvData(scope: string | undefined) {
             }
             // -------------------------------------
 
-            const uploadsDia = await fetchUploadsPorDia(lastDayIso);
+            const uploadsDia = await fetchUploadsPorDia(empresaId, lastDayIso);
             let ativo = uploadsDia.find((u) => u.ativo) ?? uploadsDia.slice().sort((a: any, b: any) => new Date(a.enviado_em).getTime() - new Date(b.enviado_em).getTime()).at(-1) ?? null;
 
             let horaRefGlobal = '00:00';
@@ -96,13 +96,13 @@ export function useTvData(scope: string | undefined) {
             if (ativo) {
                 const dt = new Date(ativo.enviado_em);
                 if (!localStorage.getItem('TV_DEBUG_DATE')) dataRefGlobalObj = dt;
-                
+
                 // Formata hora do upload para o subtítulo
                 const dataStrUpload = dt.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
                 const horaStrUpload = dt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-                
+
                 horaRefGlobal = horaStrUpload;
-                
+
                 // Mantemos o lastUpdateText com a data do arquivo para auditoria
                 if (!cancelledRef.current) setLastUpdateText(`${dataStrUpload} • ${horaStrUpload}`);
             } else if (!cancelledRef.current) {
@@ -120,9 +120,9 @@ export function useTvData(scope: string | undefined) {
             const diasCorridosMes = countDaysExcludingSundays(startMes, diaRefLocal);
             const startSerie = addDays(diaRefLocal, -13);
 
-            const { data: centrosRaw } = await supabase.from('centros').select('*').order('codigo');
+            const { data: centrosRaw } = await supabase.from('centros').select('*').eq('empresa_id', empresaId).order('codigo');
             const centrosAll = centrosRaw ?? [];
-            const metasAtuaisAll = await fetchMetasAtuais();
+            const metasAtuaisAll = await fetchMetasAtuais(empresaId);
 
             const centrosMap = new Map<number, any>();
             centrosAll.forEach((c: any) => centrosMap.set(c.id, c));
@@ -153,7 +153,7 @@ export function useTvData(scope: string | undefined) {
             let fullHistory: any[] = [];
             if (idsParaBuscarDados.size > 0) {
                 fullHistory = await fetchCentroSeriesRange(
-                    Array.from(idsParaBuscarDados), toISO(startSerie < startMes ? startSerie : startMes), toISO(diaRefLocal)
+                    empresaId, Array.from(idsParaBuscarDados), toISO(startSerie < startMes ? startSerie : startMes), toISO(diaRefLocal)
                 );
             }
 
@@ -245,7 +245,7 @@ export function useTvData(scope: string | undefined) {
 
             if (!cancelledRef.current) { setFactoryDays(serieFactory); setCentrosPerf(perfCalculada); }
         } catch (e) { console.error(e); } finally { if (!cancelledRef.current) setLoading(false); }
-    }, [scope]);
+    }, [empresaId, scope]);
 
     useEffect(() => { cancelledRef.current = false; loadData(); return () => { cancelledRef.current = true; }; }, [loadData]);
     useEffect(() => { const ch = supabase.channel('tv-realtime').on('postgres_changes', { event: '*', schema: 'public' }, () => loadData()).subscribe(); return () => { supabase.removeChannel(ch); }; }, [loadData]);

@@ -14,6 +14,7 @@ import {
 import { DatePickerInput } from '@mantine/dates';
 import type { DatesRangeValue } from '@mantine/dates';
 import { IconDownload } from '@tabler/icons-react';
+import { useEmpresaId } from '../../contexts/TenantContext';
 import {
   fetchCentros,
   fetchMetasAtuais,
@@ -132,6 +133,8 @@ function TooltipContent({ active, payload, label }: any) {
 
 /* ---------- page ---------- */
 export default function GraficosPage() {
+  const empresaId = useEmpresaId();
+
   const [range, setRange] = useState<[Date | null, Date | null]>(() => {
     const end = startOfDayLocal(new Date());
     const start = addDays(end, -6);
@@ -150,9 +153,9 @@ export default function GraficosPage() {
   useEffect(() => {
     (async () => {
       const [c, m, mt] = await Promise.all([
-        fetchCentros(),
-        fetchMetasAtuais(),
-        fetchMetaTotalAtual(),
+        fetchCentros(empresaId),
+        fetchMetasAtuais(empresaId),
+        fetchMetaTotalAtual(empresaId),
       ]);
       const ativos = c.filter((x) => x.ativo);
       setCentros(ativos);
@@ -161,7 +164,7 @@ export default function GraficosPage() {
       if (!centroSel && ativos.length) setCentroSel(String(ativos[0].id));
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [empresaId]);
 
   const metaByCentro = useMemo(
     () => new Map(metas.map((mm) => [mm.centro_id, Number(mm.meta_horas)])),
@@ -189,7 +192,7 @@ export default function GraficosPage() {
       const dias = daysBetween(start, end);
 
       if (scope === 'fabrica') {
-        const fab = await fetchFabricaRange(toISO(start), toISO(end));
+        const fab = await fetchFabricaRange(empresaId, toISO(start), toISO(end));
         const map = new Map(fab.map((r) => [r.data_wip, Number(r.produzido_h)]));
         const rows: DayRow[] = dias.map((d) => {
           const prod = +(map.get(d) ?? 0).toFixed(2);
@@ -213,7 +216,7 @@ export default function GraficosPage() {
           return;
         }
         const meta = +(metaByCentro.get(id) ?? 0);
-        const rowsRaw = await fetchCentroSeriesRange([id], toISO(start), toISO(end));
+        const rowsRaw = await fetchCentroSeriesRange(empresaId, [id], toISO(start), toISO(end));
         const map = new Map(rowsRaw.map((r) => [r.data_wip, Number(r.produzido_h)]));
         const rows: DayRow[] = dias.map((d) => {
           const prod = +(map.get(d) ?? 0).toFixed(2);
@@ -232,7 +235,7 @@ export default function GraficosPage() {
     } finally {
       setLoading(false);
     }
-  }, [range, scope, centroSel, metaTotal, metaByCentro]);
+  }, [range, scope, centroSel, metaTotal, metaByCentro, empresaId]);
 
   useEffect(() => {
     aplicar();
@@ -332,8 +335,8 @@ export default function GraficosPage() {
                 kpis.aderencia < 80
                   ? 'red'
                   : kpis.aderencia <= 100
-                  ? 'yellow'
-                  : 'green'
+                    ? 'yellow'
+                    : 'green'
               }
             >
               Aderência: {kpis.aderencia}%

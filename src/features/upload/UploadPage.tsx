@@ -8,24 +8,25 @@ import { Dropzone, MIME_TYPES } from '@mantine/dropzone';
 import { notifications } from '@mantine/notifications';
 import { Title, Card, Grid, Text, Table, Group, Button, Badge, Divider, Loader } from '@mantine/core';
 import { DateInput } from '@mantine/dates';
-import { 
-  fetchUploadsPorDia, 
-  setUploadAtivo, 
-  fetchUltimoDiaComDados, 
-  fetchEstadoAnterior, // <--- Importamos a nova função
-  type VUploadDia 
+import { useEmpresaId } from '../../contexts/TenantContext';
+import {
+  fetchUploadsPorDia,
+  setUploadAtivo,
+  fetchUltimoDiaComDados,
+  fetchEstadoAnterior,
+  type VUploadDia
 } from '../../services/db';
 
 /* ==========================
    Tipos Locais
 ========================== */
 type Centro = { id: number; codigo: string; ativo?: boolean | null; desativado_desde?: string | null };
-type Alias  = { alias_texto: string; centro_id: number };
+type Alias = { alias_texto: string; centro_id: number };
 
 type ParsedRow = {
   data_wip: string;        // 'YYYY-MM-DD'
   categoria_raw: string;
-  centro_id: number;       
+  centro_id: number;
   aliquota_horas: number;
   tipo_raw?: string | null;
   matricula?: string | null;
@@ -145,6 +146,7 @@ function parseLocalDateString(input: string | null | undefined): Date | null {
    Página Principal
 ========================== */
 export default function UploadPage() {
+  const empresaId = useEmpresaId();
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState<string[]>([]);
   const [dia, setDia] = useState<Date | null>(null);
@@ -171,12 +173,12 @@ export default function UploadPage() {
     setUploadsDia([]);
     try {
       const iso = dateToISO(d);
-      const rows = await fetchUploadsPorDia(iso);
+      const rows = await fetchUploadsPorDia(empresaId, iso);
       setUploadsDia(rows);
     } finally {
       setLoadingUploads(false);
     }
-  }, []);
+  }, [empresaId]);
 
   const handleDiaChange = (value: unknown) => {
     if (!value) {
@@ -206,7 +208,7 @@ export default function UploadPage() {
     (async () => {
       if (dia) return;
       try {
-        const last = await fetchUltimoDiaComDados();
+        const last = await fetchUltimoDiaComDados(empresaId);
         const target = last
           ? new Date(+last.slice(0, 4), +last.slice(5, 7) - 1, +last.slice(8, 10))
           : new Date();
@@ -216,7 +218,7 @@ export default function UploadPage() {
         console.error(e);
       }
     })();
-  }, [dia, refetchUploads]);
+  }, [dia, refetchUploads, empresaId]);
 
   /* ==========================
      IO/DB helpers
@@ -227,7 +229,7 @@ export default function UploadPage() {
   };
 
   const fetchCentros = async (): Promise<Centro[]> => {
-    const { data, error } = await supabase.from('centros').select('id, codigo, ativo, desativado_desde');
+    const { data, error } = await supabase.from('centros').select('id, codigo, ativo, desativado_desde').eq('empresa_id', empresaId);
     if (error) throw error;
     return data ?? [];
   };
@@ -265,6 +267,7 @@ export default function UploadPage() {
     const { count, error } = await supabase
       .from('totais_diarios')
       .select('centro_id', { count: 'exact', head: true })
+      .eq('empresa_id', empresaId)
       .eq('data_wip', dataISO);
     if (error) throw error;
     return count ?? 0;
@@ -279,27 +282,27 @@ export default function UploadPage() {
 
     // 1. Busca o estado anterior (último upload ativo deste dia)
     // Se não houver anterior, o Map vem vazio.
-    const estadoAnterior = await fetchEstadoAnterior(dataISO);
-    
+    const estadoAnterior = await fetchEstadoAnterior(empresaId, dataISO);
+
     // Data de referência padrão ("agora"), caso o dado seja novo ou tenha mudado
-    const agoraRef = new Date().toISOString(); 
+    const agoraRef = new Date().toISOString();
 
     // ---- A. Centros (totais_diarios) com Lógica de High Water Mark ----
-    
+
     // Agregação em memória
-    const agg = new Map<string, { 
-      data_wip: string; 
-      centro_id: number; 
+    const agg = new Map<string, {
+      data_wip: string;
+      centro_id: number;
       horas_somadas: number;
       // data_referencia será decidida abaixo
     }>();
 
     for (const r of rows) {
       const key = `${r.data_wip}|${r.centro_id}`;
-      const cur = agg.get(key) ?? { 
-        data_wip: r.data_wip, 
-        centro_id: r.centro_id, 
-        horas_somadas: 0, 
+      const cur = agg.get(key) ?? {
+        data_wip: r.data_wip,
+        centro_id: r.centro_id,
+        horas_somadas: 0,
       };
       cur.horas_somadas += r.aliquota_horas;
       agg.set(key, cur);
@@ -314,7 +317,7 @@ export default function UploadPage() {
       if (anterior) {
         // Verifica se houve mudança nas horas (com tolerância para float)
         const diff = Math.abs(x.horas_somadas - anterior.horas);
-        const mudou = diff > 0.005; 
+        const mudou = diff > 0.005;
 
         if (!mudou) {
           // Se não mudou, mantemos a data de referência antiga ("foto do passado")
@@ -328,13 +331,14 @@ export default function UploadPage() {
         centro_id: x.centro_id,
         horas_somadas: +x.horas_somadas.toFixed(4),
         upload_id_origem: uploadId,
-        data_referencia: refFinal // <--- CAMPO NOVO SALVO NO BANCO
+        data_referencia: refFinal,
+        empresa_id: empresaId
       };
     });
 
     // Remove registros antigos deste upload (caso de reprocessamento) e insere novos
     await supabase.from('totais_diarios').delete().eq('upload_id_origem', uploadId);
-    
+
     // Inserção em Batch
     const { error: insErr } = await supabase.from('totais_diarios').insert(inserts);
     if (insErr) throw insErr;
@@ -368,6 +372,7 @@ export default function UploadPage() {
         matricula: x.matricula,
         horas_somadas: +x.horas_somadas.toFixed(4),
         upload_id_origem: uploadId,
+        empresa_id: empresaId
       }));
       const { error: eFunc } = await supabase.from('totais_func_diarios').insert(insertsFunc);
       if (eFunc) throw eFunc;
@@ -388,6 +393,7 @@ export default function UploadPage() {
       nome_arquivo: nomeArquivo,
       linhas: originalRows.length,
       horas_total: originalRows.reduce((acc, curr) => acc + curr.aliquota_horas, 0),
+      empresa_id: empresaId
     };
 
     const { data, error } = await supabase
@@ -608,7 +614,7 @@ export default function UploadPage() {
       <Title order={2} mb="sm">Metas - Upload</Title>
       <Text c="dimmed" mb="lg">
         Envie o .xlsx. O sistema detecta automaticamente se as horas da máquina mudaram em relação ao último upload.
-        <br/>Se não mudaram, a <b>referência de tempo</b> da máquina será mantida (badge laranja na TV).
+        <br />Se não mudaram, a <b>referência de tempo</b> da máquina será mantida (badge laranja na TV).
       </Text>
 
       <Grid gutter="lg">
@@ -628,10 +634,10 @@ export default function UploadPage() {
             >
               <div style={{ padding: '48px 12px', textAlign: 'center' }}>
                 {busy ? (
-                   <Group justify="center">
-                     <Loader size="md" />
-                     <Text>Processando arquivo...</Text>
-                   </Group>
+                  <Group justify="center">
+                    <Loader size="md" />
+                    <Text>Processando arquivo...</Text>
+                  </Group>
                 ) : (
                   <>
                     <Title order={4} mb={6}>Arraste o arquivo aqui ou clique para selecionar</Title>

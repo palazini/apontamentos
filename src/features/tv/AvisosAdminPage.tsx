@@ -5,10 +5,12 @@ import {
 import { useForm } from '@mantine/form';
 import { useDisclosure } from '@mantine/hooks';
 import { IconTrash, IconPlus, IconUpload, IconFileTypePdf, IconArrowLeft, IconArrowRight } from '@tabler/icons-react';
+import { useEmpresaId } from '../../contexts/TenantContext';
 import { fetchTodosAvisos, createAviso, deleteAviso, toggleAviso, type AvisoTV } from '../../services/db';
 import { supabase } from '../../lib/supabaseClient';
 
 export default function AvisosAdminPage() {
+  const empresaId = useEmpresaId();
   const [avisos, setAvisos] = useState<AvisoTV[]>([]);
   const [opened, { open, close }] = useDisclosure(false);
   const [loading, setLoading] = useState(false);
@@ -33,7 +35,7 @@ export default function AvisosAdminPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const data = await fetchTodosAvisos();
+      const data = await fetchTodosAvisos(empresaId);
       setAvisos(data);
     } catch (err) {
       console.error(err);
@@ -66,7 +68,7 @@ export default function AvisosAdminPage() {
 
       const isoDate = new Date(`${values.valido_ate_data}T${values.valido_ate_hora}`).toISOString();
 
-      await createAviso({
+      await createAviso(empresaId, {
         titulo: values.titulo,
         mensagem: values.mensagem,
         tipo: values.tipo as any,
@@ -92,12 +94,12 @@ export default function AvisosAdminPage() {
   const handleDelete = async (id: number) => {
     if (!confirm('Excluir este aviso?')) return;
     setLoading(true);
-    await deleteAviso(id);
+    await deleteAviso(empresaId, id);
     await load();
   };
 
   const handleToggle = async (id: number, current: boolean) => {
-    await toggleAviso(id, current);
+    await toggleAviso(empresaId, id, current);
     load();
   };
 
@@ -126,7 +128,7 @@ export default function AvisosAdminPage() {
 
       <Card withBorder shadow="sm" radius="md">
         <LoadingOverlay visible={loading} zIndex={1000} overlayProps={{ radius: 'sm', blur: 2 }} />
-        
+
         <Table highlightOnHover verticalSpacing="sm">
           <Table.Thead>
             <Table.Tr>

@@ -5,6 +5,7 @@ import {
   SegmentedControl, TextInput, Pagination, rem,
 } from '@mantine/core'
 import { DatePickerInput } from '@mantine/dates';
+import { useEmpresaId } from '../../contexts/TenantContext';
 import {
   fetchFuncionarios,
   fetchRankingFuncionarios,
@@ -69,6 +70,7 @@ type SortDir = 'asc' | 'desc';
    Página
 ========================= */
 export default function RendimentoPage() {
+  const empresaId = useEmpresaId();
   // Modo de filtro: dia único ou intervalo
   const [modo, setModo] = useState<Modo>('dia');
 
@@ -107,9 +109,9 @@ export default function RendimentoPage() {
       setLoadingLookups(true);
       try {
         const [funcs, centros, lastISO] = await Promise.all([
-          fetchFuncionarios(),
-          fetchCentrosDict(),
-          fetchUltimoDiaComDados(),
+          fetchFuncionarios(empresaId),
+          fetchCentrosDict(empresaId),
+          fetchUltimoDiaComDados(empresaId),
         ]);
         setFuncList(funcs);
         setCentrosDict(centros);
@@ -120,7 +122,7 @@ export default function RendimentoPage() {
         setLoadingLookups(false);
       }
     })();
-  }, []);
+  }, [empresaId]);
 
   /* =========================
      Função principal: aplicar filtros e carregar dados
@@ -145,7 +147,7 @@ export default function RendimentoPage() {
       const endISO = toISO(end);
 
       // 1) Ranking do período (todos, com limite alto)
-      const rk = await fetchRankingFuncionarios(startISO, endISO, MAX_ROWS);
+      const rk = await fetchRankingFuncionarios(empresaId, startISO, endISO, MAX_ROWS);
       setRanking(rk);
 
       // 2) Ranking do período anterior para calcular Δ
@@ -163,14 +165,14 @@ export default function RendimentoPage() {
       }
       const prevStartISO = toISO(prevStart);
       const prevEndISO = toISO(prevEnd);
-      const rkPrev = await fetchRankingFuncionarios(prevStartISO, prevEndISO, MAX_ROWS);
+      const rkPrev = await fetchRankingFuncionarios(empresaId, prevStartISO, prevEndISO, MAX_ROWS);
       const prevMap = new Map<string, number>();
       for (const r of rkPrev) prevMap.set(r.matricula, r.horas);
       setRankingPrevMap(prevMap);
 
       // 3) Detalhe por matrícula (horas por centro no período)
       if (funcSel) {
-        const rows = await fetchFuncionarioCentroRange(funcSel, startISO, endISO);
+        const rows = await fetchFuncionarioCentroRange(empresaId, funcSel, startISO, endISO);
         const ag = new Map<number, number>();
         for (const r of rows) {
           ag.set(r.centro_id, (ag.get(r.centro_id) ?? 0) + Number(r.produzido_h));

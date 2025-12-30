@@ -1,7 +1,7 @@
 ﻿// src/components/Layout.tsx
 import type { ReactNode } from 'react';
-import { Link, useLocation, Outlet } from 'react-router-dom';
-import { AppShell, NavLink, Group, Text, Image, Badge } from '@mantine/core';
+import { Link, useLocation, Outlet, useNavigate } from 'react-router-dom';
+import { AppShell, NavLink, Group, Text, Image, Badge, Tooltip } from '@mantine/core';
 import {
   IconCalendarTime,
   IconChartHistogram,
@@ -10,8 +10,10 @@ import {
   IconUsers,
   IconGauge,
   IconDeviceTv,
-  IconSpeakerphone, // <--- NOVO IMPORT
+  IconSpeakerphone,
+  IconBuilding,
 } from '@tabler/icons-react';
+import { useTenant } from '../contexts/TenantContext';
 
 function Brand() {
   return (
@@ -26,6 +28,7 @@ type LinkItem = {
   to: string;
   icon: ReactNode;
   exact?: boolean; // quando false, marca ativo também nas subrotas
+  empresaOnly?: number; // se definido, só aparece para essa empresa
 };
 
 const links: LinkItem[] = [
@@ -46,6 +49,7 @@ const links: LinkItem[] = [
     to: '/colaboradores',
     icon: <IconUsers size={16} />,
     exact: true,
+    empresaOnly: 1, // Apenas Spirax Sarco
   },
   {
     label: 'Rendimento',
@@ -59,14 +63,12 @@ const links: LinkItem[] = [
     icon: <IconUpload size={16} />,
     exact: false,
   },
-  // --- NOVO ITEM ---
   {
     label: 'Avisos TV',
     to: '/avisos',
     icon: <IconSpeakerphone size={16} />,
     exact: true,
   },
-  // ----------------
   {
     label: 'Modo TV',
     to: '/tv',
@@ -83,6 +85,8 @@ const links: LinkItem[] = [
 
 export default function Layout() {
   const { pathname } = useLocation();
+  const navigate = useNavigate();
+  const { empresa } = useTenant();
 
   const isActive = (to: string, exact?: boolean) =>
     exact ? pathname === to : pathname === to || pathname.startsWith(`${to}/`);
@@ -101,28 +105,44 @@ export default function Layout() {
           <Link to="/" style={{ textDecoration: 'none', color: 'inherit' }}>
             <Brand />
           </Link>
-          <Badge variant="light" color="gray">
-            v0.1
-          </Badge>
+          <Group gap="xs">
+            <Tooltip label="Trocar empresa">
+              <Badge
+                variant="light"
+                color="blue"
+                size="lg"
+                leftSection={<IconBuilding size={14} />}
+                style={{ cursor: 'pointer' }}
+                onClick={() => navigate('/empresa')}
+              >
+                {empresa.nome}
+              </Badge>
+            </Tooltip>
+            <Badge variant="light" color="gray">
+              v0.1
+            </Badge>
+          </Group>
         </Group>
       </AppShell.Header>
 
       {/* NAVBAR */}
       <AppShell.Navbar p="xs" withBorder>
         <nav>
-          {links.map((l) => (
-            <NavLink
-              key={l.to}
-              component={Link}
-              to={l.to}
-              label={l.label}
-              leftSection={l.icon}
-              active={isActive(l.to, l.exact)}
-              variant="light"
-              style={{ borderRadius: 10, marginBottom: 6 }}
-              styles={{ label: { fontWeight: 600 } }}
-            />
-          ))}
+          {links
+            .filter((l) => !l.empresaOnly || l.empresaOnly === empresa.id)
+            .map((l) => (
+              <NavLink
+                key={l.to}
+                component={Link}
+                to={l.to}
+                label={l.label}
+                leftSection={l.icon}
+                active={isActive(l.to, l.exact)}
+                variant="light"
+                style={{ borderRadius: 10, marginBottom: 6 }}
+                styles={{ label: { fontWeight: 600 } }}
+              />
+            ))}
         </nav>
 
         <div

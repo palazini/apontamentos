@@ -5,10 +5,11 @@ import {
   ActionIcon, Badge, Card, Group, Loader, Stack, Text, Title, ThemeIcon, Button
 } from '@mantine/core';
 import {
-  IconChevronLeft, IconChevronRight, IconMaximize, IconMinimize, IconTrendingUp, 
+  IconChevronLeft, IconChevronRight, IconMaximize, IconMinimize, IconTrendingUp,
   IconClock, IconArrowLeft, IconX, IconCalendar // Adicionado IconCalendar
 } from '@tabler/icons-react';
 
+import { useEmpresaId } from '../../contexts/TenantContext';
 import { useTvData } from './hooks/useTvData';
 import { formatNum, perfColor } from './utils';
 import { SlideFactory } from './components/SlideFactory';
@@ -20,6 +21,7 @@ import { TickerBar } from './components/TickerBar';
 
 /* ========= PÁGINA PRINCIPAL ========= */
 export default function TvDashboardPage() {
+  const empresaId = useEmpresaId();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const { scope } = useParams();
   const navigate = useNavigate();
@@ -35,7 +37,7 @@ export default function TvDashboardPage() {
     avisos,
     resumo,
     centroPages
-  } = useTvData(scope);
+  } = useTvData(empresaId, scope);
 
   // Avisos e Slides
   const [activeSlide, setActiveSlide] = useState(0);
@@ -246,15 +248,15 @@ export default function TvDashboardPage() {
               <Card padding="xs" radius="md" withBorder shadow="xs" bg="white">
                 <Group gap="xs"><Text size="xs" fw={700} c="dimmed">DIA</Text><Badge variant="light" color="gray" size="lg">Meta: {formatNum(resumo.metaDia)}h</Badge><Badge variant="outline" color="blue" size="lg">Real: {formatNum(resumo.realDia)}h</Badge><Badge variant="outline" color={perfColor(resumo.esperadoDia > 0 ? (resumo.realDia / resumo.esperadoDia) * 100 : 0)} size="lg">{resumo.esperadoDia > 0 ? `${formatNum((resumo.realDia / resumo.esperadoDia) * 100, 1)}%` : '-'}</Badge></Group>
               </Card>
-              
+
               {/* --- CARD ATUALIZADO (Data de Referência em Destaque) --- */}
               <Card padding="sm" radius="md" withBorder shadow="sm" bg="white">
                 <Group gap="sm">
-                  <ThemeIcon 
-                    size="lg" 
-                    radius="xl" 
+                  <ThemeIcon
+                    size="lg"
+                    radius="xl"
                     // Se for hoje usa cor normal (teal), se for ontem/passado usa Laranja p/ alertar
-                    color={contextDia.isToday ? "teal" : "orange"} 
+                    color={contextDia.isToday ? "teal" : "orange"}
                     variant="light"
                   >
                     {contextDia.isToday ? <IconClock size={20} /> : <IconCalendar size={20} />}
@@ -266,7 +268,7 @@ export default function TvDashboardPage() {
                   </Stack>
                 </Group>
               </Card>
-              
+
               <ActionIcon variant="subtle" color="gray" onClick={toggleFullscreen}>{isFullscreen ? <IconMinimize size={20} /> : <IconMaximize size={20} />}</ActionIcon>
             </Group>
           </Group>

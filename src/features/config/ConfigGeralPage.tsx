@@ -9,12 +9,13 @@ import { supabase } from '../../lib/supabaseClient';
 import {
   IconPlus, IconTrash, IconCheck, IconX
 } from '@tabler/icons-react';
+import { useEmpresaId } from '../../contexts/TenantContext';
 import { fetchAliases } from '../../services/db';
 
-type Centro = { 
-  id: number; 
-  codigo: string; 
-  ativo: boolean; 
+type Centro = {
+  id: number;
+  codigo: string;
+  ativo: boolean;
   desativado_desde: string | null;
   escopo: 'usinagem' | 'montagem';
   centro_pai_id: number | null;
@@ -33,6 +34,8 @@ function isoToday(): string {
 }
 
 export default function ConfigGeralPage() {
+  const empresaId = useEmpresaId();
+
   const [loading, setLoading] = useState(true);
   const [centros, setCentros] = useState<Centro[]>([]);
   const [metas, setMetas] = useState<Meta[]>([]);
@@ -43,7 +46,7 @@ export default function ConfigGeralPage() {
   // Forms
   const [novoCentro, setNovoCentro] = useState('');
   const [novoEscopo, setNovoEscopo] = useState<'usinagem' | 'montagem'>('usinagem');
-  const [novaMeta, setNovaMeta] = useState<number | ''>('');
+  const [novaMeta, setNovaMeta] = useState<number | string>('');
   const [vigenteDesde, setVigenteDesde] = useState<string>(isoToday());
   const [encerrarAnterior, setEncerrarAnterior] = useState(true);
   const [novoAlias, setNovoAlias] = useState('');
@@ -53,13 +56,13 @@ export default function ConfigGeralPage() {
     setLoading(true);
     try {
       const [centrosRes, metasRes, aliasesRes] = await Promise.all([
-        supabase.from('centros').select('id,codigo,ativo,desativado_desde,escopo,centro_pai_id,exibir_filhos').order('codigo', { ascending: true }),
-        supabase.from('metas_diarias').select('id,centro_id,meta_horas,vigente_desde,vigente_ate').order('vigente_desde', { ascending: false }),
-        fetchAliases(),
+        supabase.from('centros').select('id,codigo,ativo,desativado_desde,escopo,centro_pai_id,exibir_filhos').eq('empresa_id', empresaId).order('codigo', { ascending: true }),
+        supabase.from('metas_diarias').select('id,centro_id,meta_horas,vigente_desde,vigente_ate').eq('empresa_id', empresaId).order('vigente_desde', { ascending: false }),
+        fetchAliases(empresaId),
       ]);
 
       if (centrosRes.error) throw centrosRes.error;
-      
+
       const centros: Centro[] = (centrosRes.data ?? []).map((r: any) => ({
         id: Number(r.id),
         codigo: String(r.codigo),
@@ -72,10 +75,10 @@ export default function ConfigGeralPage() {
 
       // Metas e Aliases continuam igual...
       const metas = (metasRes.data ?? []).map((r: any) => ({ ...r, id: Number(r.id), centro_id: Number(r.centro_id), meta_horas: Number(r.meta_horas) }));
-      
+
       setCentros(centros);
       setMetas(metas);
-      setAliases(aliasesRes); 
+      setAliases(aliasesRes);
 
       if (!centroSel && centros.length) {
         const first = centros.find(x => x.ativo) ?? centros[0];
@@ -91,7 +94,7 @@ export default function ConfigGeralPage() {
     }
   };
 
-  useEffect(() => { loadAll(); }, []);
+  useEffect(() => { loadAll(); }, [empresaId]);
 
   const centrosFiltrados = useMemo(() => centros.filter((c) => mostrarInativos || c.ativo), [centros, mostrarInativos]);
   const paiOptions = useMemo(() => centros.map((c) => ({ value: String(c.id), label: c.codigo })), [centros]);
@@ -102,7 +105,7 @@ export default function ConfigGeralPage() {
   // Ações
   const criarCentro = async () => {
     if (!novoCentro.trim()) return;
-    const { error } = await supabase.from('centros').insert({ codigo: novoCentro.trim(), ativo: true, escopo: novoEscopo, exibir_filhos: false });
+    const { error } = await supabase.from('centros').insert({ codigo: novoCentro.trim(), ativo: true, escopo: novoEscopo, exibir_filhos: false, empresa_id: empresaId });
     if (!error) { setNovoCentro(''); await loadAll(); notifications.show({ title: 'Sucesso', message: 'Centro criado', color: 'green' }); }
   };
 
@@ -138,31 +141,31 @@ export default function ConfigGeralPage() {
     const id = Number(centroSel);
     if (!id || !novaMeta) return;
     if (encerrarAnterior) {
-        const aberta = metas.find(m => m.centro_id === id && m.vigente_ate == null);
-        if (aberta) {
-            const d = new Date(vigenteDesde); d.setDate(d.getDate() - 1);
-            await supabase.from('metas_diarias').update({ vigente_ate: d.toISOString().split('T')[0] }).eq('id', aberta.id);
-        }
+      const aberta = metas.find(m => m.centro_id === id && m.vigente_ate == null);
+      if (aberta) {
+        const d = new Date(vigenteDesde); d.setDate(d.getDate() - 1);
+        await supabase.from('metas_diarias').update({ vigente_ate: d.toISOString().split('T')[0] }).eq('id', aberta.id);
+      }
     }
-    const { error } = await supabase.from('metas_diarias').insert({ centro_id: id, meta_horas: Number(novaMeta), vigente_desde: vigenteDesde });
+    const { error } = await supabase.from('metas_diarias').insert({ centro_id: id, meta_horas: Number(novaMeta), vigente_desde: vigenteDesde, empresa_id: empresaId });
     if (!error) { setNovaMeta(''); await loadAll(); notifications.show({ title: 'Meta Criada', message: 'Sucesso', color: 'green' }); }
   };
-  
+
   const encerrarMeta = async (m: Meta) => {
-      await supabase.from('metas_diarias').update({ vigente_ate: isoToday() }).eq('id', m.id);
-      loadAll();
+    await supabase.from('metas_diarias').update({ vigente_ate: isoToday() }).eq('id', m.id);
+    loadAll();
   };
 
   // Aliases
   const criarAlias = async () => {
-      const cid = Number(centroAliasSel);
-      if (!novoAlias.trim() || !cid) return;
-      const { error } = await supabase.from('centro_aliases').insert({ alias_texto: novoAlias.trim(), centro_id: cid });
-      if (!error) { setNovoAlias(''); await loadAll(); notifications.show({ title: 'Alias Criado', message: 'Sucesso', color: 'green' }); }
+    const cid = Number(centroAliasSel);
+    if (!novoAlias.trim() || !cid) return;
+    const { error } = await supabase.from('centro_aliases').insert({ alias_texto: novoAlias.trim(), centro_id: cid });
+    if (!error) { setNovoAlias(''); await loadAll(); notifications.show({ title: 'Alias Criado', message: 'Sucesso', color: 'green' }); }
   };
   const removerAlias = async (id: number) => {
-      await supabase.from('centro_aliases').delete().eq('id', id);
-      loadAll();
+    await supabase.from('centro_aliases').delete().eq('id', id);
+    loadAll();
   };
 
   return (
@@ -180,8 +183,8 @@ export default function ConfigGeralPage() {
               <Group justify="space-between" mb="sm"><Title order={4}>Centros</Title></Group>
               <Stack gap="xs" mb="md">
                 <Group grow>
-                    <TextInput placeholder="Nome (Ex: Montagem Geral)" value={novoCentro} onChange={(e) => setNovoCentro(e.currentTarget.value)} />
-                    <Button leftSection={<IconPlus size={16} />} onClick={criarCentro}>Criar</Button>
+                  <TextInput placeholder="Nome (Ex: Montagem Geral)" value={novoCentro} onChange={(e) => setNovoCentro(e.currentTarget.value)} />
+                  <Button leftSection={<IconPlus size={16} />} onClick={criarCentro}>Criar</Button>
                 </Group>
                 <SegmentedControl value={novoEscopo} onChange={(v: any) => setNovoEscopo(v)} data={[{ label: 'Usinagem', value: 'usinagem' }, { label: 'Montagem', value: 'montagem' }]} size="xs" fullWidth />
               </Stack>
@@ -203,23 +206,23 @@ export default function ConfigGeralPage() {
                       <Table.Td><input type="radio" checked={String(c.id) === centroSel} onChange={() => setCentroSel(String(c.id))} style={{ cursor: 'pointer' }} /></Table.Td>
                       <Table.Td><Text fw={500} size="sm">{c.codigo}</Text></Table.Td>
                       <Table.Td>
-                         <Select variant="unstyled" size="xs" placeholder="-" clearable value={c.centro_pai_id ? String(c.centro_pai_id) : null} onChange={(val) => alterarPai(c, val)} data={paiOptions.filter(opt => opt.value !== String(c.id))} styles={{ input: { height: 24, fontSize: 12, color: c.centro_pai_id ? '#228be6' : 'gray' } }} />
+                        <Select variant="unstyled" size="xs" placeholder="-" clearable value={c.centro_pai_id ? String(c.centro_pai_id) : null} onChange={(val) => alterarPai(c, val)} data={paiOptions.filter(opt => opt.value !== String(c.id))} styles={{ input: { height: 24, fontSize: 12, color: c.centro_pai_id ? '#228be6' : 'gray' } }} />
                       </Table.Td>
                       {/* SWITCH EXIBIR FILHOS: Só aparece se o centro NÃO tiver pai (ou seja, ele pode SER um pai) */}
                       <Table.Td>
-                         {!c.centro_pai_id && (
-                             <Tooltip label="Se ativado, exibe os filhos como cards individuais TAMBÉM.">
-                                <Switch size="xs" checked={c.exibir_filhos} onChange={(e) => alterarExibirFilhos(c, e.currentTarget.checked)} />
-                             </Tooltip>
-                         )}
+                        {!c.centro_pai_id && (
+                          <Tooltip label="Se ativado, exibe os filhos como cards individuais TAMBÉM.">
+                            <Switch size="xs" checked={c.exibir_filhos} onChange={(e) => alterarExibirFilhos(c, e.currentTarget.checked)} />
+                          </Tooltip>
+                        )}
                       </Table.Td>
                       <Table.Td>
-                         <Select variant="unstyled" size="xs" value={c.escopo} onChange={(val) => val && alterarEscopo(c, val)} data={[{ value: 'usinagem', label: 'U' }, { value: 'montagem', label: 'M' }]} allowDeselect={false} styles={{ input: { height: 24, fontSize: 12, fontWeight: 600, color: c.escopo === 'usinagem' ? 'orange' : 'purple', width: 40 } }} />
+                        <Select variant="unstyled" size="xs" value={c.escopo} onChange={(val) => val && alterarEscopo(c, val)} data={[{ value: 'usinagem', label: 'U' }, { value: 'montagem', label: 'M' }]} allowDeselect={false} styles={{ input: { height: 24, fontSize: 12, fontWeight: 600, color: c.escopo === 'usinagem' ? 'orange' : 'purple', width: 40 } }} />
                       </Table.Td>
                       <Table.Td>
-                        {c.ativo ? 
-                            <Tooltip label="Desativar"><ActionIcon size="sm" variant="subtle" color="yellow" onClick={() => desativarCentro(c)}><IconX size={16} /></ActionIcon></Tooltip> :
-                            <Tooltip label="Reativar"><ActionIcon size="sm" variant="subtle" color="green" onClick={() => reativarCentro(c)}><IconCheck size={16} /></ActionIcon></Tooltip>
+                        {c.ativo ?
+                          <Tooltip label="Desativar"><ActionIcon size="sm" variant="subtle" color="yellow" onClick={() => desativarCentro(c)}><IconX size={16} /></ActionIcon></Tooltip> :
+                          <Tooltip label="Reativar"><ActionIcon size="sm" variant="subtle" color="green" onClick={() => reativarCentro(c)}><IconCheck size={16} /></ActionIcon></Tooltip>
                         }
                       </Table.Td>
                     </Table.Tr>
@@ -266,9 +269,9 @@ export default function ConfigGeralPage() {
             <Card withBorder shadow="sm" radius="lg" p="lg">
               <Title order={4} mb="sm">Aliases</Title>
               <Stack gap="xs" mb="md">
-                  <TextInput label="Novo alias" value={novoAlias} onChange={(e) => setNovoAlias(e.currentTarget.value)} />
-                  <Select label="Vincula ao centro" value={centroAliasSel} onChange={setCentroAliasSel} data={centroOptions} searchable />
-                  <Button fullWidth leftSection={<IconPlus size={16} />} onClick={criarAlias}>Vincular</Button>
+                <TextInput label="Novo alias" value={novoAlias} onChange={(e) => setNovoAlias(e.currentTarget.value)} />
+                <Select label="Vincula ao centro" value={centroAliasSel} onChange={setCentroAliasSel} data={centroOptions} searchable />
+                <Button fullWidth leftSection={<IconPlus size={16} />} onClick={criarAlias}>Vincular</Button>
               </Stack>
               <Divider my="sm" />
               <Table highlightOnHover withTableBorder>

@@ -37,10 +37,11 @@ export type PainelUltimoUpload = {
     enviado_em: string; // timestamptz
 };
 
-export async function fetchUploadsPorDia(dateISO: string): Promise<VUploadDia[]> {
+export async function fetchUploadsPorDia(empresaId: number, dateISO: string): Promise<VUploadDia[]> {
     const { data, error } = await supabase
         .from('v_uploads_por_dia')
         .select('data_wip, upload_id, nome_arquivo, enviado_em, linhas, horas_total, ativo')
+        .eq('empresa_id', empresaId)
         .eq('data_wip', dateISO)
         .order('enviado_em', { ascending: false });
     if (error) throw error;
@@ -55,10 +56,11 @@ export async function setUploadAtivo(dateISO: string, uploadId: number) {
     if (error) throw error;
 }
 
-export async function fetchPainelUltimoUpload(): Promise<PainelUltimoUpload | null> {
+export async function fetchPainelUltimoUpload(empresaId: number): Promise<PainelUltimoUpload | null> {
     const { data, error } = await supabase
         .from('v_uploads_por_dia')
         .select('data_wip, enviado_em')
+        .eq('empresa_id', empresaId)
         .eq('ativo', true)
         .order('data_wip', { ascending: false })
         .order('enviado_em', { ascending: false })
@@ -69,10 +71,11 @@ export async function fetchPainelUltimoUpload(): Promise<PainelUltimoUpload | nu
     return (data as PainelUltimoUpload) ?? null;
 }
 
-export async function fetchUploadHeader(dataISO: string, uploadId: number): Promise<UploadHeader | null> {
+export async function fetchUploadHeader(empresaId: number, dataISO: string, uploadId: number): Promise<UploadHeader | null> {
     const { data, error } = await supabase
         .from('v_uploads_por_dia')
         .select('data_wip, upload_id, nome_arquivo, enviado_em, linhas, horas_total, ativo')
+        .eq('empresa_id', empresaId)
         .eq('data_wip', dataISO)
         .eq('upload_id', uploadId)
         .maybeSingle();
@@ -80,10 +83,11 @@ export async function fetchUploadHeader(dataISO: string, uploadId: number): Prom
     return (data as UploadHeader) ?? null;
 }
 
-export async function fetchUploadLinhas(dataISO: string, uploadId: number): Promise<UploadLinha[]> {
+export async function fetchUploadLinhas(empresaId: number, dataISO: string, uploadId: number): Promise<UploadLinha[]> {
     const { data, error } = await supabase
         .from('totais_diarios')
         .select('centro_id, horas_somadas')
+        .eq('empresa_id', empresaId)
         .eq('data_wip', dataISO)
         .eq('upload_id_origem', uploadId)
         .order('horas_somadas', { ascending: false });
@@ -91,10 +95,11 @@ export async function fetchUploadLinhas(dataISO: string, uploadId: number): Prom
     return (data ?? []) as UploadLinha[];
 }
 
-export async function fetchUploadLinhasFuncionarios(dateISO: string, uploadId: number): Promise<UploadFuncLinha[]> {
+export async function fetchUploadLinhasFuncionarios(empresaId: number, dateISO: string, uploadId: number): Promise<UploadFuncLinha[]> {
     const { data, error } = await supabase
         .from('totais_func_diarios')
         .select('matricula, centro_id, horas_somadas')
+        .eq('empresa_id', empresaId)
         .eq('data_wip', dateISO)
         .eq('upload_id_origem', uploadId)
         .order('horas_somadas', { ascending: false });

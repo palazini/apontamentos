@@ -13,14 +13,16 @@ export type AvisoTV = {
     arquivo_url?: string | null;
     pagina_atual?: number | null;
     ativo: boolean;
+    empresa_id: number;
 };
 
-export async function fetchAvisosAtivos(escopoAtual: string = 'geral'): Promise<AvisoTV[]> {
+export async function fetchAvisosAtivos(empresaId: number, escopoAtual: string = 'geral'): Promise<AvisoTV[]> {
     const now = new Date().toISOString();
 
     let query = supabase
         .from('avisos_tv')
         .select('*')
+        .eq('empresa_id', empresaId)
         .eq('ativo', true)
         .lte('valido_de', now)
         .gte('valido_ate', now);
@@ -41,26 +43,27 @@ export async function fetchAvisosAtivos(escopoAtual: string = 'geral'): Promise<
 }
 
 // Busca todos para o Admin
-export async function fetchTodosAvisos(): Promise<AvisoTV[]> {
+export async function fetchTodosAvisos(empresaId: number): Promise<AvisoTV[]> {
     const { data, error } = await supabase
         .from('avisos_tv')
         .select('*')
+        .eq('empresa_id', empresaId)
         .order('criado_em', { ascending: false });
     if (error) throw error;
     return (data ?? []) as AvisoTV[];
 }
 
-export async function createAviso(aviso: Omit<AvisoTV, 'id' | 'ativo'>) {
-    const { error } = await supabase.from('avisos_tv').insert([{ ...aviso, ativo: true }]);
+export async function createAviso(empresaId: number, aviso: Omit<AvisoTV, 'id' | 'ativo' | 'empresa_id'>) {
+    const { error } = await supabase.from('avisos_tv').insert([{ ...aviso, ativo: true, empresa_id: empresaId }]);
     if (error) throw error;
 }
 
-export async function toggleAviso(id: number, statusAtual: boolean) {
-    const { error } = await supabase.from('avisos_tv').update({ ativo: !statusAtual }).eq('id', id);
+export async function toggleAviso(empresaId: number, id: number, statusAtual: boolean) {
+    const { error } = await supabase.from('avisos_tv').update({ ativo: !statusAtual }).eq('id', id).eq('empresa_id', empresaId);
     if (error) throw error;
 }
 
-export async function deleteAviso(id: number) {
-    const { error } = await supabase.from('avisos_tv').delete().eq('id', id);
+export async function deleteAviso(empresaId: number, id: number) {
+    const { error } = await supabase.from('avisos_tv').delete().eq('id', id).eq('empresa_id', empresaId);
     if (error) throw error;
 }

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useEmpresaId } from '../../../contexts/TenantContext';
 import { fracDiaLogico } from '../../../utils/time';
 import {
     fetchMetasAtuais,
@@ -17,6 +18,8 @@ import {
 } from '../utils';
 
 export function useDashboardData() {
+    const empresaId = useEmpresaId();
+
     const [hora, setHora] = useState<string>(() => {
         const d = new Date();
         const hh = String(d.getHours()).padStart(2, '0');
@@ -57,14 +60,17 @@ export function useDashboardData() {
     useEffect(() => {
         (async () => {
             try {
-                const [m, c] = await Promise.all([fetchMetasAtuais(), fetchCentrosSmart()]);
+                const [m, c] = await Promise.all([
+                    fetchMetasAtuais(empresaId),
+                    fetchCentrosSmart(empresaId)
+                ]);
                 setMetas(m);
                 setCentros(c as CentroFull[]);
             } catch (e) {
                 console.error(e);
             }
         })();
-    }, []);
+    }, [empresaId]);
 
     useEffect(() => {
         if (dataWip) return;
@@ -79,13 +85,13 @@ export function useDashboardData() {
             setLoading(true);
             try {
                 const iso = toISO(new Date(dataWip.getFullYear(), dataWip.getMonth(), dataWip.getDate()));
-                const t = await fetchTotaisAtivosPorDia(iso);
+                const t = await fetchTotaisAtivosPorDia(empresaId, iso);
                 setTotais(t);
             } catch (e) {
                 console.error(e); setTotais([]);
             } finally { setLoading(false); }
         })();
-    }, [dataWip?.getTime()]);
+    }, [dataWip?.getTime(), empresaId]);
 
     // Lógica Principal de Agregação e Filtragem
     const linhas: LinhaCentro[] = useMemo(() => {

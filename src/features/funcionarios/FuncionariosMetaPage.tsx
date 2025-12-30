@@ -17,6 +17,7 @@ import {
 import { DateInput } from '@mantine/dates';
 import { IconEdit, IconPlus } from '@tabler/icons-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEmpresaId } from '../../contexts/TenantContext';
 import {
   fetchFuncionariosMeta,
   fetchFuncionariosDia,
@@ -164,6 +165,7 @@ function saveMonthParams(refDate: Date, diasCorridos: number, diasUteisMes: numb
    Página
 ========================== */
 export default function FuncionariosMetaPage() {
+  const empresaId = useEmpresaId();
   const today = startOfDayLocal(new Date());
 
   const [mesRef, setMesRef] = useState<Date>(() => monthStart(today));
@@ -228,7 +230,7 @@ export default function FuncionariosMetaPage() {
 
     setSaving(true);
     try {
-      await upsertFuncionarioMeta({
+      await upsertFuncionarioMeta(empresaId, {
         id: editState.id,
         matricula: editState.matricula.trim(),
         nome: editState.nome.trim(),
@@ -251,9 +253,9 @@ export default function FuncionariosMetaPage() {
     setLoading(true);
     try {
       const [metasResp, diaResp, mesResp] = await Promise.all([
-        fetchFuncionariosMeta(),
-        fetchFuncionariosDia(dateToISO(diaRef)),
-        fetchFuncionariosMes(monthToAnoMesISO(mesRef)),
+        fetchFuncionariosMeta(empresaId),
+        fetchFuncionariosDia(empresaId, dateToISO(diaRef)),
+        fetchFuncionariosMes(empresaId, monthToAnoMesISO(mesRef)),
       ]);
 
       setMetas(
@@ -284,7 +286,7 @@ export default function FuncionariosMetaPage() {
     } finally {
       setLoading(false);
     }
-  }, [mesRef, diaRef]);
+  }, [mesRef, diaRef, empresaId]);
 
   useEffect(() => {
     carregarDados();

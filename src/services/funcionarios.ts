@@ -25,19 +25,21 @@ export type FuncDia = { data_wip: string; matricula: string; produzido_h: number
 export type RankItem = { matricula: string; horas: number };
 export type FuncCentroDia = { data_wip: string; centro_id: number; produzido_h: number };
 
-export async function fetchFuncionarios(): Promise<string[]> {
+export async function fetchFuncionarios(empresaId: number): Promise<string[]> {
     const { data, error } = await supabase
         .from('v_funcionarios')
         .select('matricula')
+        .eq('empresa_id', empresaId)
         .order('matricula', { ascending: true });
     if (error) throw error;
     return (data ?? []).map((r: any) => String(r.matricula));
 }
 
-export async function fetchFuncionarioRange(matricula: string, startISO: string, endISO: string): Promise<FuncDia[]> {
+export async function fetchFuncionarioRange(empresaId: number, matricula: string, startISO: string, endISO: string): Promise<FuncDia[]> {
     const { data, error } = await supabase
         .from('v_funcionario_por_dia')
         .select('data_wip, matricula, produzido_h')
+        .eq('empresa_id', empresaId)
         .eq('matricula', matricula)
         .gte('data_wip', startISO)
         .lte('data_wip', endISO)
@@ -46,10 +48,11 @@ export async function fetchFuncionarioRange(matricula: string, startISO: string,
     return (data ?? []) as FuncDia[];
 }
 
-export async function fetchRankingFuncionarios(startISO: string, endISO: string, limit = 10): Promise<RankItem[]> {
+export async function fetchRankingFuncionarios(empresaId: number, startISO: string, endISO: string, limit = 10): Promise<RankItem[]> {
     const { data, error } = await supabase
         .from('v_funcionario_por_dia')
         .select('matricula, produzido_h')
+        .eq('empresa_id', empresaId)
         .gte('data_wip', startISO)
         .lte('data_wip', endISO);
 
@@ -66,6 +69,7 @@ export async function fetchRankingFuncionarios(startISO: string, endISO: string,
 }
 
 export async function fetchFuncionarioCentroRange(
+    empresaId: number,
     matricula: string,
     startISO: string,
     endISO: string
@@ -73,6 +77,7 @@ export async function fetchFuncionarioCentroRange(
     const { data, error } = await supabase
         .from('v_funcionario_centro_por_dia')
         .select('data_wip, centro_id, produzido_h')
+        .eq('empresa_id', empresaId)
         .eq('matricula', matricula)
         .gte('data_wip', startISO)
         .lte('data_wip', endISO)
@@ -82,17 +87,18 @@ export async function fetchFuncionarioCentroRange(
     return (data ?? []) as FuncCentroDia[];
 }
 
-export async function fetchFuncionariosMeta(): Promise<FuncionarioMeta[]> {
+export async function fetchFuncionariosMeta(empresaId: number): Promise<FuncionarioMeta[]> {
     const { data, error } = await supabase
         .from('funcionarios_meta')
         .select('id, matricula, nome, meta_diaria_horas, ativo')
+        .eq('empresa_id', empresaId)
         .order('matricula', { ascending: true });
 
     if (error) throw error;
     return (data ?? []) as FuncionarioMeta[];
 }
 
-export async function upsertFuncionarioMeta(payload: {
+export async function upsertFuncionarioMeta(empresaId: number, payload: {
     id?: number;
     matricula: string;
     nome: string;
@@ -101,6 +107,7 @@ export async function upsertFuncionarioMeta(payload: {
 }): Promise<void> {
     const row = {
         ...payload,
+        empresa_id: empresaId,
         ativo: payload.ativo ?? true,
     };
 
@@ -111,21 +118,23 @@ export async function upsertFuncionarioMeta(payload: {
     if (error) throw error;
 }
 
-export async function fetchFuncionariosDia(dataISO: string): Promise<FuncionarioDia[]> {
+export async function fetchFuncionariosDia(empresaId: number, dataISO: string): Promise<FuncionarioDia[]> {
     const { data, error } = await supabase
         .from('v_funcionario_por_dia')
         .select('data_wip, matricula, produzido_h')
+        .eq('empresa_id', empresaId)
         .eq('data_wip', dataISO);
 
     if (error) throw error;
     return (data ?? []) as FuncionarioDia[];
 }
 
-export async function fetchFuncionariosMes(anoMesISO: string): Promise<FuncionarioMes[]> {
+export async function fetchFuncionariosMes(empresaId: number, anoMesISO: string): Promise<FuncionarioMes[]> {
     // anoMesISO = '2025-11-01' (primeiro dia do mês)
     const { data, error } = await supabase
         .from('v_funcionario_por_mes')
         .select('ano_mes, matricula, produzido_h')
+        .eq('empresa_id', empresaId)
         .eq('ano_mes', anoMesISO);
 
     if (error) throw error;

@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState, Fragment } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Card, Title, Text, Table, Group, Button, Badge, SegmentedControl } from '@mantine/core';
+import { useEmpresaId } from '../../contexts/TenantContext';
 import {
   fetchCentros,
   fetchUploadHeader,
@@ -34,6 +35,7 @@ function toLocalBR(dt: string | Date) {
 type Visao = 'centros' | 'matriculas';
 
 export default function UploadDetalhePage() {
+  const empresaId = useEmpresaId();
   const nav = useNavigate();
   const { data, uploadId } = useParams(); // /upload/:data/:uploadId
   const dataISO = data!;
@@ -57,10 +59,10 @@ export default function UploadDetalhePage() {
       setLoading(true);
       try {
         const [h, lsCentros, cs, lsFuncs] = await Promise.all([
-          fetchUploadHeader(dataISO, id),
-          fetchUploadLinhas(dataISO, id),
-          fetchCentros(),
-          fetchUploadLinhasFuncionarios(dataISO, id), // matricula + centro_id + horas
+          fetchUploadHeader(empresaId, dataISO, id),
+          fetchUploadLinhas(empresaId, dataISO, id),
+          fetchCentros(empresaId),
+          fetchUploadLinhasFuncionarios(empresaId, dataISO, id), // matricula + centro_id + horas
         ]);
         setHeader(h);
         setLinhasCentros(lsCentros);
@@ -70,7 +72,7 @@ export default function UploadDetalhePage() {
         setLoading(false);
       }
     })();
-  }, [dataISO, id]);
+  }, [dataISO, id, empresaId]);
 
   // Distintos de matrícula (para badge)
   const qtdMatriculas = useMemo(
