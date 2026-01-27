@@ -24,6 +24,7 @@ import {
   type Centro,
   type VMetaAtual,
 } from '../../services/db';
+import { isSaturdayISO } from '../tv/utils';
 import {
   ResponsiveContainer,
   Bar,
@@ -196,8 +197,12 @@ export default function GraficosPage() {
         const map = new Map(fab.map((r) => [r.data_wip, Number(r.produzido_h)]));
         const rows: DayRow[] = dias.map((d) => {
           const prod = +(map.get(d) ?? 0).toFixed(2);
-          const meta = +metaTotal.toFixed(2);
-          const pct = meta > 0 ? (prod / meta) * 100 : 100;
+
+          // Lógica de Sábado: Meta = 0
+          const isSaturday = isSaturdayISO(d);
+          const meta = isSaturday ? 0 : +metaTotal.toFixed(2);
+
+          const pct = meta > 0 ? (prod / meta) * 100 : (prod > 0 ? 100 : 0);
           return {
             iso: d,
             label: shortBR(d),
@@ -215,12 +220,17 @@ export default function GraficosPage() {
           setLoading(false);
           return;
         }
-        const meta = +(metaByCentro.get(id) ?? 0);
+        const metaStandard = +(metaByCentro.get(id) ?? 0);
         const rowsRaw = await fetchCentroSeriesRange(empresaId, [id], toISO(start), toISO(end));
         const map = new Map(rowsRaw.map((r) => [r.data_wip, Number(r.produzido_h)]));
         const rows: DayRow[] = dias.map((d) => {
           const prod = +(map.get(d) ?? 0).toFixed(2);
-          const pct = meta > 0 ? (prod / meta) * 100 : 100;
+
+          // Lógica de Sábado: Meta = 0
+          const isSaturday = isSaturdayISO(d);
+          const meta = isSaturday ? 0 : metaStandard;
+
+          const pct = meta > 0 ? (prod / meta) * 100 : (prod > 0 ? 100 : 0);
           return {
             iso: d,
             label: shortBR(d),

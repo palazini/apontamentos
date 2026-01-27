@@ -20,7 +20,7 @@ import {
     daysBetween,
     isSundayISO,
     isSaturdayISO,
-    countDaysExcludingSundays,
+    countDaysExcludingSatSun,
     shortBR,
     isCentroAtivoNoDia,
     extractTime,
@@ -117,7 +117,7 @@ export function useTvData(empresaId: number, scope: string | undefined) {
             if (!cancelledRef.current) setContextDia({ isPast, isToday, isFuture, frac: fracGlobal });
 
             const startMes = new Date(diaRefLocal.getFullYear(), diaRefLocal.getMonth(), 1);
-            const diasCorridosMes = countDaysExcludingSundays(startMes, diaRefLocal);
+            const diasCorridosMes = countDaysExcludingSatSun(startMes, diaRefLocal);
             const startSerie = addDays(diaRefLocal, -13);
 
             const { data: centrosRaw } = await supabase.from('centros').select('*').eq('empresa_id', empresaId).order('codigo');
@@ -170,8 +170,11 @@ export function useTvData(empresaId: number, scope: string | undefined) {
                 const hasParent = !!centroCard.centro_pai_id;
                 const isPinned = !!centroCard.exibir_filhos && isParent && (scope === centroCard.escopo);
                 const childrenIds = parentToChildren.get(cardId) ?? [cardId];
-                const metaDia = metasMap.get(cardId) ?? 0;
-                const metaMes = metaDia * diasCorridosMes;
+                const metaDiaStandard = metasMap.get(cardId) ?? 0;
+                const isRefSaturday = isSaturdayISO(toISO(diaRefLocal));
+                const metaDia = isRefSaturday ? 0 : metaDiaStandard; // Se for sábado, meta dia é 0.
+
+                const metaMes = metaDiaStandard * diasCorridosMes;
                 let realDia = 0, realMes = 0;
                 let lastRefStr = horaRefGlobal;
                 let cardIsStale = false;
@@ -233,14 +236,17 @@ export function useTvData(empresaId: number, scope: string | undefined) {
                 });
             });
 
-            const metaTotalCards = perfCalculada.filter(c => c.is_parent || !c.has_parent).reduce((acc, c) => acc + c.meta_dia, 0);
+            const metaTotalStandard = perfCalculada.filter(c => c.is_parent || !c.has_parent).reduce((acc, c) => acc + (metasMap.get(c.centro_id) ?? 0), 0);
             const dias = daysBetween(startSerie, diaRefLocal);
             const serieFactory: FactoryDayRow[] = [];
             for (const iso of dias) {
                 if (isSundayISO(iso)) continue;
+                const isSat = isSaturdayISO(iso);
+                const metaDoDia = isSat ? 0 : metaTotalStandard;
+
                 const prod = +(historyAgregadoGlobal.get(iso) ?? 0).toFixed(2);
-                const pct = metaTotalCards > 0 ? (prod / metaTotalCards) * 100 : 100;
-                serieFactory.push({ iso, label: shortBR(iso), produzido: prod, meta: metaTotalCards, pct, isSaturday: isSaturdayISO(iso) });
+                const pct = metaDoDia > 0 ? (prod / metaDoDia) * 100 : (prod > 0 ? 100 : 0);
+                serieFactory.push({ iso, label: shortBR(iso), produzido: prod, meta: metaDoDia, pct, isSaturday: isSat });
             }
 
             if (!cancelledRef.current) { setFactoryDays(serieFactory); setCentrosPerf(perfCalculada); }

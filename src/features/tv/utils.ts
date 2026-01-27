@@ -32,6 +32,15 @@ export function countDaysExcludingSundays(start: Date, end: Date) {
     return count;
 }
 
+export function countDaysExcludingSatSun(start: Date, end: Date) {
+    let count = 0;
+    for (let d = startOfDayLocal(start); d <= end; d = addDays(d, 1)) {
+        const day = d.getDay();
+        if (day !== 0 && day !== 6) count += 1;
+    }
+    return count;
+}
+
 export function shortBR(iso: string) {
     const d = isoToLocalDate(iso);
     return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
